@@ -20,3 +20,26 @@
 #ifdef __GNUC__
 #  pragma GCC diagnostic pop
 #endif // __GNUC__
+
+static inline HWND find_aviutl_window(void) {
+  DWORD const pid = GetCurrentProcessId();
+  HWND h = NULL;
+  for (;;) {
+    h = FindWindowExA(NULL, h, "AviUtl", NULL);
+    if (h == 0) {
+      return 0;
+    }
+    DWORD p = 0;
+    GetWindowThreadProcessId(h, &p);
+    if (p != pid) {
+      continue;
+    }
+    if (!IsWindowVisible(h)) {
+      continue;
+    }
+    if (!(GetWindowLongW(h, GWL_STYLE) & WS_MINIMIZEBOX)) {
+      continue;
+    }
+    return h;
+  }
+}

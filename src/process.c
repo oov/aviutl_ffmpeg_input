@@ -6,12 +6,15 @@
 #include "ovutil/str.h"
 #include "ovutil/win32.h"
 
+#include <stdatomic.h>
+
 struct process {
   struct process_options opt;
   wchar_t unique_id[16];
   HANDLE process;
   HANDLE event;
   thrd_t thread;
+  atomic_bool need_join;
 };
 
 static NODISCARD error create_event(HANDLE *const event, wchar_t *const name16) {
@@ -44,8 +47,11 @@ static NODISCARD error create_event(HANDLE *const event, wchar_t *const name16) 
 static int worker(void *userdata) {
   struct process *p = userdata;
   WaitForSingleObject(p->process, INFINITE);
-  if (p->opt.on_terminate) {
-    p->opt.on_terminate(p->opt.userdata);
+  process_notify_func fn = p->opt.on_terminate;
+  void *fnu = p->opt.userdata;
+  atomic_store(&p->need_join, false);
+  if (fn) {
+    fn(fnu);
   }
   return 0;
 }
@@ -117,6 +123,7 @@ NODISCARD error process_create(struct process **const pp, struct process_options
                &native_unmanaged_const(NSTR("プロセスの起動に失敗しました。")));
     goto cleanup;
   }
+  atomic_store(&p->need_join, true);
   if (thrd_create(&p->thread, worker, p) != thrd_success) {
     err = errg(err_unexpected);
     goto cleanup;
@@ -155,7 +162,13 @@ NODISCARD error process_destroy(struct process **const pp) {
   if (WaitForSingleObject(p->process, 5000) == WAIT_TIMEOUT) {
     TerminateProcess(p->process, 1);
   }
-  thrd_join(p->thread, NULL);
+  bool const join = atomic_load(&p->need_join);
+  if (join) {
+    thrd_join(p->thread, NULL);
+  } else {
+    thrd_detach(p->thread);
+  }
+
   CloseHandle(p->process);
   CloseHandle(p->event);
   ereport(mem_free(pp));

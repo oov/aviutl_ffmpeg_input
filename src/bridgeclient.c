@@ -1,6 +1,7 @@
 #include "bridgeclient.h"
 
 #include "ovbase.h"
+#include "ovthreads.h"
 #include "ovutil/str.h"
 #include "ovutil/win32.h"
 
@@ -9,6 +10,8 @@
 #include "ipcclient.h"
 #include "process.h"
 #include "version.h"
+
+#include <stdatomic.h>
 
 static struct process *g_process = NULL;
 static struct ipcclient *g_ipcc = NULL;
@@ -23,16 +26,27 @@ static wchar_t g_fmo_name[16] = {0};
 
 struct handle {
   uint64_t id;
+  struct str filepath;
   size_t frame_size;
   size_t sample_size;
 };
 
+struct handle_map_item {
+  struct handle *key;
+};
+
+static mtx_t g_handles_mtx = {0};
+static struct hmap g_handles = {0};
+static bool g_exiting = false;
+
 static BOOL ffmpeg_input_info_get(INPUT_HANDLE ih, INPUT_INFO *iip) {
-  if (!g_ipcc || !ih) {
-    return FALSE;
-  }
+  mtx_lock(&g_handles_mtx);
   error err = eok();
   struct bridge_event_get_info_response *resp = NULL;
+  if (!g_ipcc || !ih) {
+    goto cleanup;
+  }
+
   struct handle *h = (void *)ih;
   struct ipcclient_response r = {0};
   err = ipcclient_call(g_ipcc,
@@ -94,12 +108,15 @@ static BOOL ffmpeg_input_info_get(INPUT_HANDLE ih, INPUT_INFO *iip) {
 cleanup:
   if (efailed(err)) {
     ereport(err);
-    return FALSE;
   }
+  mtx_unlock(&g_handles_mtx);
   return resp && resp->success ? TRUE : FALSE;
 }
 
-static NODISCARD error read(INPUT_HANDLE ih, int start, int length, void *buf, int *written) {
+static NODISCARD error call_read(INPUT_HANDLE ih, int start, int length, void *buf, int *written) {
+  if (!ih || !buf || !written) {
+    return errg(err_invalid_arugment);
+  }
   error err = eok();
   struct handle *h = (void *)ih;
   struct bridge_event_read_response *resp = NULL;
@@ -163,48 +180,59 @@ cleanup:
 }
 
 static int ffmpeg_input_read_video(INPUT_HANDLE ih, int frame, void *buf) {
-  if (!g_ipcc || !ih) {
-    return 0;
-  }
+  mtx_lock(&g_handles_mtx);
+  error err = eok();
   int written = 0;
-  error err = read(ih, frame, 0, buf, &written);
+  if (!g_ipcc || !ih) {
+    goto cleanup;
+  }
+  err = call_read(ih, frame, 0, buf, &written);
   if (efailed(err)) {
     err = ethru(err);
-    ereport(err);
-    return 0;
+    goto cleanup;
   }
+cleanup:
+  if (efailed(err)) {
+    ereport(err);
+  }
+  mtx_unlock(&g_handles_mtx);
   return written;
 }
 
 static int ffmpeg_input_read_audio(INPUT_HANDLE ih, int start, int length, void *buf) {
-  if (!g_ipcc || !ih) {
-    return 0;
-  }
+  mtx_lock(&g_handles_mtx);
+  error err = eok();
   int written = 0;
-  error err = read(ih, start, length, buf, &written);
+  if (!g_ipcc || !ih) {
+    goto cleanup;
+  }
+  err = call_read(ih, start, length, buf, &written);
   if (efailed(err)) {
     err = ethru(err);
-    ereport(err);
-    return 0;
+    goto cleanup;
   }
+cleanup:
+  if (efailed(err)) {
+    ereport(err);
+  }
+  mtx_unlock(&g_handles_mtx);
   return written;
 }
 
-static BOOL ffmpeg_input_close(INPUT_HANDLE ih) {
-  if (!g_ipcc || !ih) {
-    return FALSE;
+static NODISCARD error call_close(struct ipcclient *const ipcc, uint64_t const id, bool *const success) {
+  if (!ipcc || !id || !success) {
+    return errg(err_invalid_arugment);
   }
   error err = eok();
-  struct handle *h = (void *)ih;
   struct bridge_event_close_response *resp = NULL;
   struct ipcclient_response r = {0};
-  err = ipcclient_call(g_ipcc,
+  err = ipcclient_call(ipcc,
                        &(struct ipcclient_request){
                            .event_id = bridge_event_close,
                            .size = sizeof(struct bridge_event_close_request),
                            .ptr =
                                &(struct bridge_event_close_request){
-                                   .id = h->id,
+                                   .id = id,
                                },
                        },
                        &r);
@@ -221,26 +249,48 @@ static BOOL ffmpeg_input_close(INPUT_HANDLE ih) {
     goto cleanup;
   }
   resp = r.ptr;
+  *success = resp->success;
+cleanup:
+  return err;
+}
+
+static BOOL ffmpeg_input_close(INPUT_HANDLE ih) {
+  mtx_lock(&g_handles_mtx);
+  error err = eok();
+  bool success = false;
+  if (!g_ipcc || !ih) {
+    goto cleanup;
+  }
+  struct handle *h = (void *)ih;
+  err = call_close(g_ipcc, h->id, &success);
+  if (efailed(err)) {
+    err = ethru(err);
+    goto cleanup;
+  }
+  ereport(sfree(&h->filepath));
+  ereport(hmdelete(&g_handles,
+                   (&(struct handle_map_item){
+                       .key = h,
+                   }),
+                   NULL));
+  ereport(mem_free(&h));
 cleanup:
   if (efailed(err)) {
     ereport(err);
-    return FALSE;
-  } else {
-    ereport(mem_free(&h));
   }
-  return resp && resp->success ? TRUE : FALSE;
+  mtx_unlock(&g_handles_mtx);
+  return success ? TRUE : FALSE;
 }
 
-static INPUT_HANDLE ffmpeg_input_open(char *filepath) {
-  if (!g_ipcc || !filepath) {
-    return NULL;
+static NODISCARD error call_open(struct ipcclient *const ipcc, char const *const filepath, struct handle *h) {
+  if (!ipcc || !filepath || !h) {
+    return errg(err_invalid_arugment);
   }
   error err = eok();
-  struct handle *h = NULL;
   size_t const l = strlen(filepath);
   size_t req_size = sizeof(struct bridge_event_open_request) + l;
   void *buffer = NULL;
-  err = ipcclient_grow_buffer(g_ipcc, req_size, &buffer);
+  err = ipcclient_grow_buffer(ipcc, req_size, &buffer);
   if (efailed(err)) {
     err = ethru(err);
     goto cleanup;
@@ -251,7 +301,7 @@ static INPUT_HANDLE ffmpeg_input_open(char *filepath) {
   };
   memcpy(req + 1, filepath, l);
   struct ipcclient_response r = {0};
-  err = ipcclient_call(g_ipcc,
+  err = ipcclient_call(ipcc,
                        &(struct ipcclient_request){
                            .event_id = bridge_event_open,
                            .size = (uint32_t)req_size,
@@ -271,24 +321,72 @@ static INPUT_HANDLE ffmpeg_input_open(char *filepath) {
     goto cleanup;
   }
   struct bridge_event_open_response *resp = r.ptr;
-  err = mem(&h, 1, sizeof(struct handle));
-  if (efailed(err)) {
-    err = ethru(err);
-    goto cleanup;
-  }
   *h = (struct handle){
       .id = resp->id,
       .frame_size = (size_t)resp->frame_size,
       .sample_size = (size_t)resp->sample_size,
   };
 cleanup:
+  return err;
+}
+
+static INPUT_HANDLE ffmpeg_input_open(char *filepath) {
+  mtx_lock(&g_handles_mtx);
+  error err = eok();
+  struct handle *h = NULL;
+  struct handle tmp = {0};
+  if (!g_ipcc || !filepath) {
+    goto cleanup;
+  }
+  err = call_open(g_ipcc, filepath, &tmp);
   if (efailed(err)) {
+    err = ethru(err);
+    goto cleanup;
+  }
+  err = mem(&h, 1, sizeof(struct handle));
+  if (efailed(err)) {
+    err = ethru(err);
+    goto cleanup;
+  }
+  err = scpy(&tmp.filepath, filepath);
+  if (efailed(err)) {
+    err = ethru(err);
+    goto cleanup;
+  }
+  *h = tmp;
+  err = hmset(&g_handles,
+              (&(struct handle_map_item){
+                  .key = h,
+              }),
+              NULL);
+  if (efailed(err)) {
+    err = ethru(err);
+    goto cleanup;
+  }
+cleanup:
+  if (efailed(err)) {
+    if (h) {
+      ereport(mem_free(&h));
+    }
+    if (tmp.id) {
+      bool success = false;
+      ereport(call_close(g_ipcc, tmp.id, &success));
+    }
+    if (tmp.filepath.ptr) {
+      ereport(sfree(&tmp.filepath));
+    }
     ereport(err);
   }
+  mtx_unlock(&g_handles_mtx);
   return (INPUT_HANDLE)h;
 }
 
-static BOOL ffmpeg_input_init(void) {
+static void process_finished(void *userdata);
+
+static NODISCARD error start_process(struct process **const pp, struct ipcclient **const cp) {
+  if (!pp || *pp || !cp || *cp) {
+    return errg(err_invalid_arugment);
+  }
   error err = eok();
   struct wstr module = {0};
   err = get_module_file_name(get_hinstance(), &module);
@@ -324,17 +422,18 @@ static BOOL ffmpeg_input_init(void) {
     goto cleanup;
   }
 
-  err = process_create(&g_process,
+  err = process_create(pp,
                        &(struct process_options){
                            .module_path = module.ptr,
+                           .on_terminate = process_finished,
                        });
   if (efailed(err)) {
     err = ethru(err);
     goto cleanup;
   }
   wchar_t pipe_name[64] = {0};
-  build_pipe_name(pipe_name, process_get_unique_id(g_process));
-  err = ipcclient_create(&g_ipcc,
+  build_pipe_name(pipe_name, process_get_unique_id(*pp));
+  err = ipcclient_create(cp,
                          &(struct ipcclient_options){
                              .pipe_name = pipe_name,
                              .signature = BRIDGE_IPC_SIGNATURE,
@@ -350,25 +449,148 @@ static BOOL ffmpeg_input_init(void) {
 cleanup:
   ereport(sfree(&module));
   if (efailed(err)) {
-    if (g_ipcc) {
-      ereport(ipcclient_destroy(&g_ipcc));
+    if (*cp) {
+      ereport(ipcclient_destroy(cp));
     }
-    if (g_process) {
-      ereport(process_destroy(&g_process));
+    if (*pp) {
+      ereport(process_destroy(pp));
     }
-    error_message_box(err, L"ffmpeg Video Reader の初期化に失敗しました。");
-    return FALSE;
   }
-  return TRUE;
+  return err;
 }
 
-static BOOL ffmpeg_input_exit(void) {
+struct restore_handle_context {
+  struct ipcclient *ipcc;
+  error err;
+};
+
+static bool restore_handle(void const *const item, void *const udata) {
+  struct handle_map_item *hmi = ov_deconster_(item);
+  struct restore_handle_context *ctx = udata;
+  struct handle tmp = {0};
+  ctx->err = call_open(ctx->ipcc, hmi->key->filepath.ptr, &tmp);
+  if (efailed(ctx->err)) {
+    ctx->err = ethru(ctx->err);
+    return false;
+  }
+  hmi->key->id = tmp.id;
+  return true;
+}
+
+static void process_finished(void *userdata) {
+  (void)userdata;
+  error err = eok();
+  HWND window = find_aviutl_window();
+  HWND *disabled_windows = NULL;
+  struct process *new_process = NULL;
+  struct ipcclient *new_ipcc = NULL;
+  mtx_lock(&g_handles_mtx);
+  if (g_exiting) {
+    goto cleanup;
+  }
   if (g_ipcc) {
     ereport(ipcclient_destroy(&g_ipcc));
   }
   if (g_process) {
     ereport(process_destroy(&g_process));
   }
+  ereport(disable_family_windows(window, &disabled_windows));
+  int const r = MessageBoxW(window,
+                            L"動画読み込み用プロセスの異常終了を検知しました。\r\n"
+                            L"このままだとすべての動画読み込み処理に失敗します。\r\n\r\n"
+                            L"プロセスの再起動を試みますか？",
+                            L"ffmpeg Video Reader Bridge " VERSION_WIDE,
+                            MB_ICONWARNING | MB_OKCANCEL);
+  if (r != IDOK) {
+    goto cleanup;
+  }
+  err = start_process(&new_process, &new_ipcc);
+  if (efailed(err)) {
+    err = ethru(err);
+    goto cleanup;
+  }
+  struct restore_handle_context ctx = {
+      .ipcc = new_ipcc,
+      .err = eok(),
+  };
+  err = hmscan(&g_handles, restore_handle, &ctx);
+  if (eisg(err, err_abort)) {
+    efree(&err);
+    err = ctx.err;
+    ctx.err = NULL;
+  }
+  if (efailed(err)) {
+    err = ethru(err);
+    goto cleanup;
+  }
+cleanup:
+  if (efailed(err)) {
+    if (new_ipcc) {
+      ereport(ipcclient_destroy(&new_ipcc));
+    }
+    if (new_process) {
+      ereport(process_destroy(&new_process));
+    }
+  } else {
+    g_process = new_process;
+    g_ipcc = new_ipcc;
+  }
+  restore_disabled_family_windows(disabled_windows);
+  mtx_unlock(&g_handles_mtx);
+  ereport(err);
+}
+
+static BOOL ffmpeg_input_init(void) {
+  error err = eok();
+  bool mtx_initialized = false;
+  if (mtx_init(&g_handles_mtx, mtx_plain | mtx_recursive) != thrd_success) {
+    err = errg(err_unexpected);
+    goto cleanup;
+  }
+  mtx_initialized = true;
+
+  mtx_lock(&g_handles_mtx);
+
+  err = hmnews(&g_handles, sizeof(struct handle_map_item), 4, sizeof(struct handle *));
+  if (efailed(err)) {
+    err = ethru(err);
+    goto cleanup;
+  }
+  err = start_process(&g_process, &g_ipcc);
+  if (efailed(err)) {
+    err = ethru(err);
+    goto cleanup;
+  }
+cleanup:
+  if (efailed(err)) {
+    if (g_handles.ptr) {
+      ereport(hmfree(&g_handles));
+    }
+    if (mtx_initialized) {
+      mtx_destroy(&g_handles_mtx);
+    }
+    error_message_box(err, L"ffmpeg Video Reader の初期化に失敗しました。");
+    return FALSE;
+  }
+  mtx_unlock(&g_handles_mtx);
+  return TRUE;
+}
+
+static BOOL ffmpeg_input_exit(void) {
+  mtx_lock(&g_handles_mtx);
+  g_exiting = true;
+  mtx_unlock(&g_handles_mtx);
+
+  if (g_ipcc) {
+    ereport(ipcclient_destroy(&g_ipcc));
+  }
+  if (g_process) {
+    ereport(process_destroy(&g_process));
+  }
+  if (g_handles.ptr) {
+    ereport(hmfree(&g_handles));
+  }
+  mtx_destroy(&g_handles_mtx);
   if (g_bih) {
     ereport(mem_free(&g_bih));
   }
