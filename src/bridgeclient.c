@@ -644,7 +644,7 @@ cleanup:
     if (new_process) {
       ereport(process_destroy(&new_process));
     }
-  } else {
+  } else if (!g_exiting) {
     g_process = new_process;
     g_ipcc = new_ipcc;
   }

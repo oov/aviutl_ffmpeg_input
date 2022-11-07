@@ -14,7 +14,7 @@ struct process {
   HANDLE process;
   HANDLE event;
   thrd_t thread;
-  atomic_bool need_join;
+  atomic_bool exiting;
 };
 
 static NODISCARD error create_event(HANDLE *const event, wchar_t *const name16) {
@@ -49,8 +49,7 @@ static int worker(void *userdata) {
   WaitForSingleObject(p->process, INFINITE);
   process_notify_func fn = p->opt.on_terminate;
   void *fnu = p->opt.userdata;
-  atomic_store(&p->need_join, false);
-  if (fn) {
+  if (fn && !atomic_load(&p->exiting)) {
     fn(fnu);
   }
   return 0;
@@ -123,7 +122,7 @@ NODISCARD error process_create(struct process **const pp, struct process_options
                &native_unmanaged_const(NSTR("プロセスの起動に失敗しました。")));
     goto cleanup;
   }
-  atomic_store(&p->need_join, true);
+  atomic_store(&p->exiting, false);
   if (thrd_create(&p->thread, worker, p) != thrd_success) {
     err = errg(err_unexpected);
     goto cleanup;
@@ -157,17 +156,13 @@ NODISCARD error process_destroy(struct process **const pp) {
     return errg(err_unexpected);
   }
   struct process *const p = *pp;
+  atomic_store(&p->exiting, true);
   SetEvent(p->event);
   // If it does not work well, it may cause freezes, so consider forced termination.
   if (WaitForSingleObject(p->process, 5000) == WAIT_TIMEOUT) {
     TerminateProcess(p->process, 1);
   }
-  bool const join = atomic_load(&p->need_join);
-  if (join) {
-    thrd_join(p->thread, NULL);
-  } else {
-    thrd_detach(p->thread);
-  }
+  thrd_join(p->thread, NULL);
 
   CloseHandle(p->process);
   CloseHandle(p->event);
