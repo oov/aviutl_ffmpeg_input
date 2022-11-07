@@ -315,12 +315,15 @@ void audio_destroy(struct audio **const app) {
     avcodec_free_context(&a->codec_context);
   }
   if (a->format_context) {
+    if (a->format_context->pb->opaque) {
+      CloseHandle(a->format_context->pb->opaque);
+    }
     avformat_close_input(&a->format_context);
   }
   ereport(mem_free(app));
 }
 
-NODISCARD error audio_create(struct audio **const app, struct info_audio *const ai, char const *const filepath) {
+NODISCARD error audio_create(struct audio **const app, struct info_audio *const ai, wchar_t const *const filepath) {
   if (!app || *app || !ai || !filepath) {
     return errg(err_invalid_arugment);
   }
@@ -332,7 +335,12 @@ NODISCARD error audio_create(struct audio **const app, struct info_audio *const 
   }
   *fp = (struct audio){0};
 
-  int r = avformat_open_input(&fp->format_context, filepath, NULL, NULL);
+  err = ffmpeg_create_format_context(filepath, 8126, &fp->format_context);
+  if (efailed(err)) {
+    err = ethru(err);
+    goto cleanup;
+  }
+  int r = avformat_open_input(&fp->format_context, "", NULL, NULL);
   if (r < 0) {
     err = emsg(err_type_errno, AVUNERROR(r), &native_unmanaged_const(NSTR("avformat_open_input failed")));
     goto cleanup;

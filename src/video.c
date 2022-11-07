@@ -285,12 +285,15 @@ void video_destroy(struct video **const vpp) {
     avcodec_free_context(&v->codec_context);
   }
   if (v->format_context) {
+    if (v->format_context->pb->opaque) {
+      CloseHandle(v->format_context->pb->opaque);
+    }
     avformat_close_input(&v->format_context);
   }
   ereport(mem_free(vpp));
 }
 
-NODISCARD error video_create(struct video **const vpp, struct info_video *const vi, char const *const filepath) {
+NODISCARD error video_create(struct video **const vpp, struct info_video *const vi, wchar_t const *const filepath) {
   if (!vpp || *vpp || !vi || !filepath) {
     return errg(err_invalid_arugment);
   }
@@ -301,8 +304,12 @@ NODISCARD error video_create(struct video **const vpp, struct info_video *const 
     return NULL;
   }
   *fp = (struct video){0};
-
-  int r = avformat_open_input(&fp->format_context, filepath, NULL, NULL);
+  err = ffmpeg_create_format_context(filepath, 8126, &fp->format_context);
+  if (efailed(err)) {
+    err = ethru(err);
+    goto cleanup;
+  }
+  int r = avformat_open_input(&fp->format_context, "", NULL, NULL);
   if (r < 0) {
     err = emsg(err_type_errno, AVUNERROR(r), &native_unmanaged_const(NSTR("avformat_open_input failed")));
     goto cleanup;

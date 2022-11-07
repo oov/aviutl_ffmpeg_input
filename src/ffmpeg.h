@@ -1,5 +1,7 @@
 #pragma once
 
+#include "ovbase.h"
+
 #ifdef __GNUC__
 #  ifndef __has_warning
 #    define __has_warning(x) 0
@@ -29,3 +31,7 @@
 #ifdef __GNUC__
 #  pragma GCC diagnostic pop
 #endif // __GNUC__
+
+NODISCARD error ffmpeg_create_format_context(wchar_t const *const filename,
+                                             size_t const buffer_size,
+                                             AVFormatContext **const format_context);

@@ -109,16 +109,23 @@ static INPUT_HANDLE ffmpeg_input_open(char *filepath) {
   struct file *fp = NULL;
   struct video *v = NULL;
   struct audio *a = NULL;
+  struct wstr ws = {0};
   struct info_video vi = {0};
   struct info_audio ai = {0};
-
-  err = video_create(&v, &vi, filepath);
+  err = from_mbcs(&str_unmanaged_const(filepath), &ws);
   if (efailed(err)) {
-    ereport(err);
+    err = ethru(err);
+    goto cleanup;
   }
-  err = audio_create(&a, &ai, filepath);
+  err = video_create(&v, &vi, ws.ptr);
   if (efailed(err)) {
-    ereport(err);
+    err = ethru(err);
+    goto cleanup;
+  }
+  err = audio_create(&a, &ai, ws.ptr);
+  if (efailed(err)) {
+    err = ethru(err);
+    goto cleanup;
   }
   if (!v && !a) {
     err = errg(err_fail);
@@ -127,6 +134,7 @@ static INPUT_HANDLE ffmpeg_input_open(char *filepath) {
 
   err = mem(&fp, 1, sizeof(struct file));
   if (efailed(err)) {
+    err = ethru(err);
     goto cleanup;
   }
   *fp = (struct file){
@@ -166,6 +174,7 @@ static INPUT_HANDLE ffmpeg_input_open(char *filepath) {
   }
 
 cleanup:
+  ereport(sfree(&ws));
   if (efailed(err)) {
     if (fp) {
       ereport(mem_free(&fp));

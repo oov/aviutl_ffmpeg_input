@@ -43,6 +43,7 @@ add_library(ffmpeg_input SHARED
   bridgeclient.c
   bridgeserver.c
   error.c
+  ffmpeg.c
   ffmpeg_input.rc
   file.c
   ipcclient.c
