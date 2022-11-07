@@ -231,8 +231,31 @@ cleanup:
   ctx->finish(ctx, err);
 }
 
+static void ipc_handler_config(struct ipcserver_context *const ctx) {
+  error err = eok();
+  if (ctx->buffer_size != sizeof(struct bridge_event_config_request)) {
+    err = emsg(err_type_generic,
+               err_invalid_arugment,
+               &native_unmanaged_const(NSTR("config request packet size is incorrect")));
+    goto cleanup;
+  }
+  struct bridge_event_config_request const *const req = ctx->buffer;
+  BOOL const r = g_ipt->func_config((HWND)req->window, get_hinstance());
+  err = ctx->grow_buffer(ctx, (uint32_t)(sizeof(struct bridge_event_config_response)));
+  if (efailed(err)) {
+    err = ethru(err);
+    goto cleanup;
+  }
+  struct bridge_event_config_response *resp = ctx->buffer;
+  *resp = (struct bridge_event_config_response){
+      .success = r != FALSE ? 1 : 0,
+  };
+cleanup:
+  ctx->finish(ctx, err);
+}
+
 static void ipc_handler(struct ipcserver_context *const ctx) {
-  switch (ctx->event_id) {
+  switch ((enum bridge_event_id)ctx->event_id) {
   case bridge_event_open:
     ipc_handler_open(ctx);
     return;
@@ -244,6 +267,9 @@ static void ipc_handler(struct ipcserver_context *const ctx) {
     return;
   case bridge_event_read:
     ipc_handler_read(ctx);
+    return;
+  case bridge_event_config:
+    ipc_handler_config(ctx);
     return;
   }
   ctx->finish(ctx, errg(err_invalid_arugment));

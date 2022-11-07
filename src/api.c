@@ -6,6 +6,7 @@
 
 #include "audio.h"
 #include "error.h"
+#include "version.h"
 #include "video.h"
 
 // this is a dummy definition to avoid errors during static analysis.
@@ -258,6 +259,75 @@ static BOOL ffmpeg_input_exit(void) {
   return TRUE;
 }
 
+struct config_dialog_props {
+  error err;
+};
+
+static wchar_t const config_prop[] = L"config_prop";
+
+static INT_PTR CALLBACK config_wndproc(HWND const dlg, UINT const message, WPARAM const wparam, LPARAM const lparam) {
+  switch (message) {
+  case WM_INITDIALOG: {
+    struct config_dialog_props *const pr = (void *)lparam;
+    SetPropW(dlg, config_prop, (HANDLE)pr);
+    SetWindowTextW(dlg, "ffmpeg Video Reader " VERSION_WIDE);
+    return TRUE;
+  }
+  case WM_DESTROY:
+    RemovePropW(dlg, config_prop);
+    return 0;
+  case WM_COMMAND:
+    switch (LOWORD(wparam)) {
+    case IDOK: {
+      error err = eok();
+      struct config_dialog_props *const pr = (void *)GetPropW(dlg, config_prop);
+      if (!pr) {
+        err = errg(err_unexpected);
+        goto cleanup;
+      }
+    cleanup:
+      if (efailed(err)) {
+        pr->err = err;
+        err = NULL;
+        EndDialog(dlg, 0);
+        return TRUE;
+      }
+      EndDialog(dlg, IDOK);
+      return TRUE;
+    }
+    case IDCANCEL:
+      EndDialog(dlg, IDCANCEL);
+      return TRUE;
+    }
+    break;
+  }
+  return FALSE;
+}
+
+static BOOL ffmpeg_input_config(HWND window, HINSTANCE dll_hinst) {
+  (void)dll_hinst;
+  error err = eok();
+  struct config_dialog_props pr = {
+      .err = eok(),
+  };
+  INT_PTR r = DialogBoxParamW(get_hinstance(), L"CONFIG", window, config_wndproc, (LPARAM)&pr);
+  if (r == 0 || r == -1) {
+    if (efailed(pr.err)) {
+      err = ethru(pr.err);
+      pr.err = NULL;
+    } else {
+      err = errhr(HRESULT_FROM_WIN32(GetLastError()));
+    }
+    goto cleanup;
+  }
+  if (r == IDCANCEL) {
+    goto cleanup;
+  }
+cleanup:
+  ereport(err);
+  return TRUE;
+}
+
 #define VIDEO_EXTS "*.mkv;*.avi;*.mov;*.wmv;*.mp4;*.webm;*.mpeg;*.ts;*.mts;*.m2ts"
 // #define AUDIO_EXTS "*.mp3;*.ogg;*.wav;*.aac;*.wma;*.m4a;*.webm;*.opus"
 
@@ -266,7 +336,7 @@ INPUT_PLUGIN_TABLE *get_input_plugin_table(void) {
       .flag = INPUT_PLUGIN_FLAG_VIDEO | INPUT_PLUGIN_FLAG_AUDIO,
       .name = "ffmpeg Video Reader",
       .filefilter = "ffmpeg Supported Files (" VIDEO_EXTS ")\0" VIDEO_EXTS "\0",
-      .information = "ffmpeg Video Reader",
+      .information = "ffmpeg Video Reader " VERSION,
       .func_init = ffmpeg_input_init,
       .func_exit = ffmpeg_input_exit,
       .func_open = ffmpeg_input_open,
@@ -275,7 +345,7 @@ INPUT_PLUGIN_TABLE *get_input_plugin_table(void) {
       .func_read_video = ffmpeg_input_read_video,
       .func_read_audio = ffmpeg_input_read_audio,
       // .func_is_keyframe = ffmpeg_input_is_keyframe,
-      .func_config = NULL,
+      .func_config = ffmpeg_input_config,
   };
   return &table;
 }

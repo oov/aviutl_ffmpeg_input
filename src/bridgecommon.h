@@ -11,6 +11,7 @@ enum bridge_event_id {
   bridge_event_close = 2,
   bridge_event_get_info = 3,
   bridge_event_read = 4,
+  bridge_event_config = 5,
 };
 
 #define BRIDGE_IPC_SIGNATURE (0x96419697)
@@ -76,6 +77,14 @@ struct PACKED bridge_event_read_request {
 struct PACKED bridge_event_read_response {
   int32_t written;
   wchar_t fmo_name[16];
+};
+
+struct PACKED bridge_event_config_request {
+  uint64_t window;
+};
+
+struct PACKED bridge_event_config_response {
+  int32_t success;
 };
 
 #ifdef __GNUC__

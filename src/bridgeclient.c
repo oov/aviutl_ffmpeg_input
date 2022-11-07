@@ -39,6 +39,119 @@ static mtx_t g_handles_mtx = {0};
 static struct hmap g_handles = {0};
 static bool g_exiting = false;
 
+struct config_thread_context {
+  HWND window;
+  HANDLE event;
+  BOOL ret;
+  error err;
+};
+
+static int config_thread(void *arg) {
+  struct config_thread_context *ctx = arg;
+  mtx_lock(&g_handles_mtx);
+  error err = eok();
+  HWND *disabled_windows = NULL;
+  struct bridge_event_config_response *resp = NULL;
+  if (!g_ipcc) {
+    goto cleanup;
+  }
+
+  struct ipcclient_response r = {0};
+  // disable all windows to prevent any unexpected troubles.
+  err = disable_family_windows(0, &disabled_windows);
+  if (efailed(err)) {
+    err = ethru(err);
+    goto cleanup;
+  }
+  err = ipcclient_call(g_ipcc,
+                       &(struct ipcclient_request){
+                           .event_id = bridge_event_config,
+                           .size = sizeof(struct bridge_event_config_request),
+                           .ptr =
+                               &(struct bridge_event_config_request){
+                                   .window = (uint64_t)ctx->window,
+                               },
+                       },
+                       &r);
+  if (efailed(err)) {
+    err = ethru(err);
+    goto cleanup;
+  }
+  if (!r.ptr) {
+    err = emsg(err_type_generic, err_fail, &native_unmanaged_const(NSTR("config failed on remote")));
+    goto cleanup;
+  }
+  if (r.size != sizeof(struct bridge_event_config_response)) {
+    err = errg(err_unexpected);
+    goto cleanup;
+  }
+  char *ptr = r.ptr;
+  resp = (void *)ptr;
+  ctx->ret = resp->success ? TRUE : FALSE;
+cleanup:
+  restore_disabled_family_windows(disabled_windows);
+  mtx_unlock(&g_handles_mtx);
+  if (efailed(err)) {
+    ctx->err = err;
+  }
+  SetEvent(ctx->event);
+  return 0;
+}
+
+static BOOL ffmpeg_input_config(HWND window, HINSTANCE dll_hinst) {
+  (void)dll_hinst;
+  error err = eok();
+  struct config_thread_context ctx = {
+      .window = window,
+      .event = CreateEventW(NULL, FALSE, FALSE, NULL),
+      .ret = FALSE,
+      .err = eok(),
+  };
+  if (!ctx.event) {
+    err = errhr(HRESULT_FROM_WIN32(GetLastError()));
+    goto cleanup;
+  }
+  thrd_t th;
+  if (thrd_create(&th, config_thread, &ctx) != thrd_success) {
+    err = emsg(err_type_generic, err_unexpected, &native_unmanaged_const(NSTR("failed to start new thread")));
+    goto cleanup;
+  }
+  thrd_detach(th);
+  MSG msg = {0};
+  for (;;) {
+    DWORD r = MsgWaitForMultipleObjects(1, &ctx.event, FALSE, INFINITE, QS_ALLINPUT);
+    switch (r) {
+    case WAIT_OBJECT_0:
+      goto cleanup;
+    case WAIT_OBJECT_0 + 1:
+      while (PeekMessage(&msg, NULL, 0, 0, PM_REMOVE)) {
+        TranslateMessage(&msg);
+        DispatchMessageW(&msg);
+      }
+      break;
+    case WAIT_FAILED:
+      err = errhr(HRESULT_FROM_WIN32(GetLastError()));
+      goto cleanup;
+    default:
+      goto cleanup;
+    }
+  }
+cleanup:
+  if (esucceeded(err)) {
+    err = ctx.err;
+    ctx.err = NULL;
+  } else {
+    efree(&ctx.err);
+  }
+  if (ctx.event) {
+    CloseHandle(ctx.event);
+  }
+  if (efailed(err)) {
+    ereport(err);
+  }
+  return ctx.ret;
+}
+
 static BOOL ffmpeg_input_info_get(INPUT_HANDLE ih, INPUT_INFO *iip) {
   mtx_lock(&g_handles_mtx);
   error err = eok();
@@ -617,7 +730,7 @@ INPUT_PLUGIN_TABLE *get_input_plugin_bridge_table(void) {
       .func_read_video = ffmpeg_input_read_video,
       .func_read_audio = ffmpeg_input_read_audio,
       // .func_is_keyframe = ffmpeg_input_is_keyframe,
-      .func_config = NULL,
+      .func_config = ffmpeg_input_config,
   };
   return &table;
 }
