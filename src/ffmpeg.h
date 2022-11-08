@@ -35,3 +35,9 @@
 NODISCARD error ffmpeg_create_format_context(wchar_t const *const filename,
                                              size_t const buffer_size,
                                              AVFormatContext **const format_context);
+void ffmpeg_destroy_format_context(AVFormatContext **const format_context);
+
+NODISCARD error ffmpeg_open_codec(AVCodec const *const codec,
+                                  AVCodecParameters const *const codec_params,
+                                  AVDictionary **const options,
+                                  AVCodecContext **const codec_context);

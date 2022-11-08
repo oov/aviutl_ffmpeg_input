@@ -117,12 +117,22 @@ static INPUT_HANDLE ffmpeg_input_open(char *filepath) {
     err = ethru(err);
     goto cleanup;
   }
-  err = video_create(&v, &vi, ws.ptr);
+  err = video_create(&v,
+                     &vi,
+                     &(struct video_options){
+                         .filepath = ws.ptr,
+                         .prefered_decoders = NULL,
+                     });
   if (efailed(err)) {
     err = ethru(err);
     goto cleanup;
   }
-  err = audio_create(&a, &ai, ws.ptr);
+  err = audio_create(&a,
+                     &ai,
+                     &(struct audio_options){
+                         .filepath = ws.ptr,
+                         .prefered_decoders = NULL,
+                     });
   if (efailed(err)) {
     err = ethru(err);
     goto cleanup;

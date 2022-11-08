@@ -44,6 +44,7 @@ add_library(ffmpeg_input SHARED
   bridgeserver.c
   error.c
   ffmpeg.c
+  ffmpegutil.c
   ffmpeg_input.rc
   file.c
   ipcclient.c
@@ -80,6 +81,8 @@ target_compile_definitions(ffmpeg_input PRIVATE
   "SWRESAMPLE_DLL=L\"${SWRESAMPLE_NAME}.dll\""
 )
 
+add_executable(ffmpeg_test ffmpegutil.c ffmpeg_test.c)
+list(APPEND targets ffmpeg_test)
 add_executable(ipc_test file.c ipcclient.c ipcserver.c ipc_test.c)
 list(APPEND targets ipc_test)
 

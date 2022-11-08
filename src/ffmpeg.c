@@ -79,3 +79,40 @@ cleanup:
   }
   return err;
 }
+
+void ffmpeg_destroy_format_context(AVFormatContext **const format_context) {
+  if ((*format_context)->pb->opaque) {
+    CloseHandle((*format_context)->pb->opaque);
+  }
+  avformat_close_input(format_context);
+}
+
+NODISCARD error ffmpeg_open_codec(AVCodec const *const codec,
+                                  AVCodecParameters const *const codec_params,
+                                  AVDictionary **const options,
+                                  AVCodecContext **const codec_context) {
+  error err = eok();
+  AVCodecContext *ctx = avcodec_alloc_context3(codec);
+  if (!ctx) {
+    err = emsg(err_type_generic, err_fail, &native_unmanaged_const(NSTR("avcodec_alloc_context3 failed")));
+    goto cleanup;
+  }
+  int r = avcodec_parameters_to_context(ctx, codec_params);
+  if (r < 0) {
+    err = emsg(err_type_errno, AVUNERROR(r), &native_unmanaged_const(NSTR("avcodec_parameters_to_context failed")));
+    goto cleanup;
+  }
+  r = avcodec_open2(ctx, codec, options);
+  if (r < 0) {
+    err = emsg(err_type_errno, AVUNERROR(r), &native_unmanaged_const(NSTR("avcodec_open2 failed")));
+    goto cleanup;
+  }
+  *codec_context = ctx;
+cleanup:
+  if (efailed(err)) {
+    if (ctx) {
+      avcodec_free_context(&ctx);
+    }
+  }
+  return err;
+}

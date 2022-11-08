@@ -6,6 +6,7 @@
 #endif
 
 #include "ffmpeg.h"
+#include "ffmpegutil.h"
 
 typedef int16_t sample_t;
 static int const g_channels = 2;
@@ -315,16 +316,15 @@ void audio_destroy(struct audio **const app) {
     avcodec_free_context(&a->codec_context);
   }
   if (a->format_context) {
-    if (a->format_context->pb->opaque) {
-      CloseHandle(a->format_context->pb->opaque);
-    }
-    avformat_close_input(&a->format_context);
+    ffmpeg_destroy_format_context(&a->format_context);
   }
   ereport(mem_free(app));
 }
 
-NODISCARD error audio_create(struct audio **const app, struct info_audio *const ai, wchar_t const *const filepath) {
-  if (!app || *app || !ai || !filepath) {
+NODISCARD error audio_create(struct audio **const app,
+                             struct info_audio *const ai,
+                             struct audio_options const *const opt) {
+  if (!app || *app || !ai || !opt || !opt->filepath) {
     return errg(err_invalid_arugment);
   }
   struct audio *fp = NULL;
@@ -335,7 +335,7 @@ NODISCARD error audio_create(struct audio **const app, struct info_audio *const 
   }
   *fp = (struct audio){0};
 
-  err = ffmpeg_create_format_context(filepath, 8126, &fp->format_context);
+  err = ffmpeg_create_format_context(opt->filepath, 8126, &fp->format_context);
   if (efailed(err)) {
     err = ethru(err);
     goto cleanup;
@@ -360,35 +360,39 @@ NODISCARD error audio_create(struct audio **const app, struct info_audio *const 
     err = emsg(err_type_generic, err_fail, &native_unmanaged_const(NSTR("stream not found")));
     goto cleanup;
   }
-  fp->codec = avcodec_find_decoder(fp->stream->codecpar->codec_id);
-  if (!fp->codec) {
+  AVCodec const *const codec = avcodec_find_decoder(fp->stream->codecpar->codec_id);
+  if (!codec) {
     err = emsg(err_type_generic, err_fail, &native_unmanaged_const(NSTR("video decoder not found")));
     goto cleanup;
   }
 
-  // TODO: ユーザー側でデコーダーの優先度指定があるならそれに従って検索
-  // char const *codec_str = fp->video_codec->name;
-  // if (true /*decoder_redirect.count(codec_str) != 0*/) {
-  //   AVCodec const *const dec = avcodec_find_decoder_by_name("h264_qsv");
-  //   if (dec) {
-  //     fp->codec = dec;
-  //   }
-  // }
+  if (opt->prefered_decoders) {
+    size_t pos = 0;
+    char buf[32];
+    char const *preferred = NULL;
+    while ((preferred = ffmpegutil_find_preferred_decoder(opt->prefered_decoders, codec->name, &pos, buf)) != NULL) {
+      AVCodec const *const c = avcodec_find_decoder_by_name(preferred);
+      if (!c) {
+        continue;
+      }
+      err = ffmpeg_open_codec(c, fp->stream->codecpar, NULL, &fp->codec_context);
+      if (efailed(err)) {
+        err = ethru(err);
+        ereport(err);
+        continue;
+      }
+      fp->codec = c;
+      break;
+    }
+  }
 
-  fp->codec_context = avcodec_alloc_context3(fp->codec);
-  if (!fp->codec_context) {
-    err = emsg(err_type_generic, err_fail, &native_unmanaged_const(NSTR("avcodec_alloc_context3 failed")));
-    goto cleanup;
-  }
-  r = avcodec_parameters_to_context(fp->codec_context, fp->stream->codecpar);
-  if (r < 0) {
-    err = emsg(err_type_errno, AVUNERROR(r), &native_unmanaged_const(NSTR("avcodec_parameters_to_context failed")));
-    goto cleanup;
-  }
-  r = avcodec_open2(fp->codec_context, fp->codec, NULL);
-  if (r < 0) {
-    err = emsg(err_type_errno, AVUNERROR(r), &native_unmanaged_const(NSTR("avcodec_open2 failed")));
-    goto cleanup;
+  if (!fp->codec) {
+    err = ffmpeg_open_codec(codec, fp->stream->codecpar, NULL, &fp->codec_context);
+    if (efailed(err)) {
+      err = ethru(err);
+      goto cleanup;
+    }
+    fp->codec = codec;
   }
 
   fp->frame = av_frame_alloc();
