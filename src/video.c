@@ -250,8 +250,7 @@ static inline struct SwsContext *create_sws_context(struct video *fp) {
   if (is_output_yuy2) {
     int const f = fp->codec_context->pix_fmt;
     if (f != AV_PIX_FMT_RGB24 && f != AV_PIX_FMT_RGB32 && f != AV_PIX_FMT_RGBA && f != AV_PIX_FMT_BGR0 &&
-        f != AV_PIX_FMT_BGR24 && f != AV_PIX_FMT_BGR32 && f != AV_PIX_FMT_BGRA && f != AV_PIX_FMT_ARGB &&
-        f != AV_PIX_FMT_ABGR && f != AV_PIX_FMT_GBRP) {
+        f != AV_PIX_FMT_BGR24 && f != AV_PIX_FMT_ARGB && f != AV_PIX_FMT_ABGR && f != AV_PIX_FMT_GBRP) {
       pix_format = AV_PIX_FMT_YUYV422;
       fp->yuy2 = true;
     }
