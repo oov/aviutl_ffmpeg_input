@@ -103,7 +103,7 @@ cleanup:
 }
 
 static INPUT_HANDLE ffmpeg_input_open(char *filepath) {
-  if (!ffmpeg_loaded || !has_postfix(filepath)) {
+  if (!ffmpeg_loaded) {
     return NULL;
   }
   error err = eok();
@@ -122,6 +122,10 @@ static INPUT_HANDLE ffmpeg_input_open(char *filepath) {
   err = config_load(config);
   if (efailed(err)) {
     err = ethru(err);
+    goto cleanup;
+  }
+  if (config_get_need_postfix(config) && !has_postfix(filepath)) {
+    // skip
     goto cleanup;
   }
   err = from_mbcs(&str_unmanaged_const(filepath), &ws);
