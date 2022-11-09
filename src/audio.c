@@ -433,7 +433,8 @@ NODISCARD error audio_create(struct audio **const app,
     err = emsg(err_type_errno, AVUNERROR(r), &native_unmanaged_const(NSTR("swr_alloc_set_opts2 failed")));
     goto cleanup;
   }
-  av_opt_set_int(fp->swr_context, "engine", SWR_ENGINE_SOXR, 0);
+  // TODO: would like to be able to use sox if it supports resampling in the future.
+  // av_opt_set_int(fp->swr_context, "engine", SWR_ENGINE_SOXR, 0);
   r = swr_init(fp->swr_context);
   if (r < 0) {
     err = emsg(err_type_errno, AVUNERROR(r), &native_unmanaged_const(NSTR("swr_init failed")));
