@@ -383,6 +383,7 @@ static INT_PTR CALLBACK config_wndproc(HWND const dlg, UINT const message, WPARA
         }
       }
     cleanup:
+      ereport(sfree(&s));
       if (efailed(err)) {
         pr->err = err;
         err = NULL;
