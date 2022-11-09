@@ -86,7 +86,7 @@ receive_frame:
   case AVERROR_INPUT_CHANGED:
     break;
   default:
-    err = emsg(err_type_errno, AVUNERROR(r), &native_unmanaged_const(NSTR("avcodec_receive_frame failed")));
+    err = errffmpeg(r);
     goto cleanup;
   }
 read_frame:
@@ -100,10 +100,10 @@ read_frame:
     case AVERROR(EAGAIN):
       goto receive_frame;
     case AVERROR_EOF:
-      err = emsg(err_type_errno, AVUNERROR(r), &native_unmanaged_const(NSTR("decoder has been flushed")));
+      err = errffmpeg(r); // decoder has been flushed
       goto cleanup;
     default:
-      err = emsg(err_type_errno, AVUNERROR(r), &native_unmanaged_const(NSTR("avcodec_receive_frame failed")));
+      err = errffmpeg(r);
       goto cleanup;
     }
   }
@@ -116,7 +116,7 @@ read_frame:
   case AVERROR(EAGAIN): // not ready to accept avcodec_send_packet, must call avcodec_receive_frame.
     goto receive_frame;
   default:
-    err = emsg(err_type_errno, AVUNERROR(r), &native_unmanaged_const(NSTR("avcodec_send_packet failed")));
+    err = errffmpeg(r);
     goto cleanup;
   }
 cleanup:
@@ -148,7 +148,7 @@ static NODISCARD error jump(struct audio *fp, int64_t sample) {
 
   int r = avformat_seek_file(fp->format_context, -1, INT64_MIN, time_stamp, INT64_MAX, 0);
   if (r < 0) {
-    err = emsg(err_type_errno, AVUNERROR(r), &native_unmanaged_const(NSTR("avformat_seek_file failed")));
+    err = errffmpeg(r);
     goto cleanup;
   }
   avcodec_flush_buffers(fp->codec_context);
@@ -243,7 +243,7 @@ readbuf:
   // flushswr:
   r = swr_convert(fp->swr_context, &fp->swr_buf, fp->swr_buf_len, NULL, 0);
   if (r < 0) {
-    err = emsg(err_type_errno, AVUNERROR(r), &native_unmanaged_const(NSTR("swr_convert failed")));
+    err = errffmpeg(r);
     goto cleanup;
   }
   if (r) {
@@ -271,7 +271,7 @@ convert:
   r = swr_convert(
       fp->swr_context, (void *)&fp->swr_buf, fp->swr_buf_len, (void *)fp->frame->data, fp->frame->nb_samples);
   if (r < 0) {
-    err = emsg(err_type_errno, AVUNERROR(r), &native_unmanaged_const(NSTR("swr_convert failed")));
+    err = errffmpeg(r);
     goto cleanup;
   }
   if (r) {
@@ -282,7 +282,7 @@ convert:
 
 cleanup:
   if (efailed(err)) {
-    if (eis_errno(err, AVUNERROR(AVERROR_EOF))) {
+    if (eis_errno(err, AVERROR_EOF)) {
       efree(&err);
       if (read < length) {
         memset(dest + read, 0, (size_t)((length - read) * g_sample_size));
@@ -341,12 +341,12 @@ NODISCARD error audio_create(struct audio **const app,
   }
   int r = avformat_open_input(&fp->format_context, "", NULL, NULL);
   if (r < 0) {
-    err = emsg(err_type_errno, AVUNERROR(r), &native_unmanaged_const(NSTR("avformat_open_input failed")));
+    err = errffmpeg(r);
     goto cleanup;
   }
   r = avformat_find_stream_info(fp->format_context, NULL);
   if (r < 0) {
-    err = emsg(err_type_errno, AVUNERROR(r), &native_unmanaged_const(NSTR("avformat_find_stream_info failed")));
+    err = errffmpeg(r);
     goto cleanup;
   }
 
@@ -392,7 +392,7 @@ NODISCARD error audio_create(struct audio **const app,
   fp->swr_buf_len = fp->codec_context->sample_rate * g_channels;
   r = av_samples_alloc(&fp->swr_buf, NULL, 2, fp->swr_buf_len, AV_SAMPLE_FMT_S16, 0);
   if (r < 0) {
-    err = emsg(err_type_errno, AVUNERROR(r), &native_unmanaged_const(NSTR("av_samples_alloc failed")));
+    err = errffmpeg(r);
     goto cleanup;
   }
 
@@ -406,14 +406,14 @@ NODISCARD error audio_create(struct audio **const app,
                           0,
                           NULL);
   if (r < 0) {
-    err = emsg(err_type_errno, AVUNERROR(r), &native_unmanaged_const(NSTR("swr_alloc_set_opts2 failed")));
+    err = errffmpeg(r);
     goto cleanup;
   }
   // TODO: would like to be able to use sox if it supports resampling in the future.
   // av_opt_set_int(fp->swr_context, "engine", SWR_ENGINE_SOXR, 0);
   r = swr_init(fp->swr_context);
   if (r < 0) {
-    err = emsg(err_type_errno, AVUNERROR(r), &native_unmanaged_const(NSTR("swr_init failed")));
+    err = errffmpeg(r);
     goto cleanup;
   }
 

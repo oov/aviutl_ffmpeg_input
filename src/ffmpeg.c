@@ -2,6 +2,25 @@
 
 #include "ovutil/win32.h"
 
+NODISCARD error ffmpeg_create_error(int errnum ERR_FILEPOS_PARAMS) {
+  char buf[AV_ERROR_MAX_STRING_SIZE];
+  if (av_strerror(errnum, buf, AV_ERROR_MAX_STRING_SIZE) < 0) {
+    return eok();
+  }
+  struct NATIVE_STR s = {0};
+  error err = from_mbcs(&str_unmanaged_const(buf), &s);
+  if (efailed(err)) {
+    err = ethru(err);
+    goto failed;
+  }
+  return error_add_(NULL, err_type_errno, errnum, &s ERR_FILEPOS_VALUES_PASSTHRU);
+
+failed:
+  ereport(sfree(&s));
+  ereport(err);
+  return err(err_type_errno, errnum);
+}
+
 static int w32read(void *opaque, uint8_t *buf, int buf_size) {
   DWORD read;
   if (!ReadFile((HANDLE)opaque, (void *)buf, (DWORD)buf_size, &read, NULL)) {
@@ -136,12 +155,12 @@ static NODISCARD error open_codec(AVCodec const *const codec,
   }
   int r = avcodec_parameters_to_context(ctx, codec_params);
   if (r < 0) {
-    err = emsg(err_type_errno, AVUNERROR(r), &native_unmanaged_const(NSTR("avcodec_parameters_to_context failed")));
+    err = errffmpeg(r);
     goto cleanup;
   }
   r = avcodec_open2(ctx, codec, options);
   if (r < 0) {
-    err = emsg(err_type_errno, AVUNERROR(r), &native_unmanaged_const(NSTR("avcodec_open2 failed")));
+    err = errffmpeg(r);
     goto cleanup;
   }
   *codec_context = ctx;
@@ -171,7 +190,9 @@ NODISCARD error ffmpeg_open_preferred_codec(char const *const decoders,
       err = open_codec(preferred, codec_params, options, codec_context);
       if (efailed(err)) {
         err = ethru(err);
-        ereport(err);
+        wchar_t buf[1024];
+        wsprintfW(buf, L"failed open codec with \"%hs\".", preferred->name);
+        ereportmsg(err, &native_unmanaged_const(buf));
         continue;
       }
       if (codec_selected) {

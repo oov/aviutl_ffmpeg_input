@@ -70,7 +70,7 @@ receive_frame:
   case AVERROR_INPUT_CHANGED:
     break;
   default:
-    err = emsg(err_type_errno, AVUNERROR(r), &native_unmanaged_const(NSTR("avcodec_receive_frame failed")));
+    err = errffmpeg(r);
     goto cleanup;
   }
 read_frame:
@@ -84,10 +84,10 @@ read_frame:
     case AVERROR(EAGAIN):
       goto receive_frame;
     case AVERROR_EOF:
-      err = emsg(err_type_errno, AVUNERROR(r), &native_unmanaged_const(NSTR("decoder has been flushed")));
+      err = errffmpeg(r); // decoder has been flushed
       goto cleanup;
     default:
-      err = emsg(err_type_errno, AVUNERROR(r), &native_unmanaged_const(NSTR("avcodec_receive_frame failed")));
+      err = errffmpeg(r);
       goto cleanup;
     }
   }
@@ -102,7 +102,7 @@ read_frame:
     // not ready to accept avcodec_send_packet, must call avcodec_receive_frame.
     goto receive_frame;
   default:
-    err = emsg(err_type_errno, AVUNERROR(r), &native_unmanaged_const(NSTR("avcodec_send_packet failed")));
+    err = errffmpeg(r);
     goto cleanup;
   }
 cleanup:
@@ -134,7 +134,7 @@ static NODISCARD error jump(struct video *fp, int64_t frame) {
 
   int r = avformat_seek_file(fp->format_context, -1, INT64_MIN, time_stamp, INT64_MAX, 0);
   if (r < 0) {
-    err = emsg(err_type_errno, AVUNERROR(r), &native_unmanaged_const(NSTR("avformat_seek_file failed")));
+    err = errffmpeg(r);
     goto cleanup;
   }
   avcodec_flush_buffers(fp->codec_context);
@@ -344,12 +344,12 @@ NODISCARD error video_create(struct video **const vpp,
   }
   int r = avformat_open_input(&fp->format_context, "", NULL, NULL);
   if (r < 0) {
-    err = emsg(err_type_errno, AVUNERROR(r), &native_unmanaged_const(NSTR("avformat_open_input failed")));
+    err = errffmpeg(r);
     goto cleanup;
   }
   r = avformat_find_stream_info(fp->format_context, NULL);
   if (r < 0) {
-    err = emsg(err_type_errno, AVUNERROR(r), &native_unmanaged_const(NSTR("avformat_find_stream_info failed")));
+    err = errffmpeg(r);
     goto cleanup;
   }
 

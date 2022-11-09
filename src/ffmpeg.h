@@ -32,6 +32,9 @@
 #  pragma GCC diagnostic pop
 #endif // __GNUC__
 
+NODISCARD error ffmpeg_create_error(int const errnum ERR_FILEPOS_PARAMS);
+#define errffmpeg(errnum) (ffmpeg_create_error((errnum)ERR_FILEPOS_VALUES))
+
 NODISCARD error ffmpeg_create_format_context(wchar_t const *const filename,
                                              size_t const buffer_size,
                                              AVFormatContext **const format_context);
