@@ -9,6 +9,8 @@ struct ipcclient_options {
   uint32_t signature;
   uint32_t protocol_version;
   uint32_t connect_timeout_msec;
+  void *userdata;
+  bool (*is_aborted)(void *userdata);
 };
 
 NODISCARD error ipcclient_create(struct ipcclient **const c, struct ipcclient_options *opt);

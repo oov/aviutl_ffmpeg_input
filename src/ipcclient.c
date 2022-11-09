@@ -81,8 +81,10 @@ NODISCARD error ipcclient_create(struct ipcclient **const c, struct ipcclient_op
     HANDLE pipe = NULL;
     err = connect(opt->pipe_name, opt->signature, opt->protocol_version, &pipe);
     if (efailed(err)) {
-      if (get_now_in_ms() < deadline && (eis_hr(err, HRESULT_FROM_WIN32(ERROR_FILE_NOT_FOUND)) ||
-                                         eis_hr(err, HRESULT_FROM_WIN32(ERROR_BROKEN_PIPE)))) {
+      if (get_now_in_ms() < deadline &&
+          (eis_hr(err, HRESULT_FROM_WIN32(ERROR_FILE_NOT_FOUND)) ||
+           eis_hr(err, HRESULT_FROM_WIN32(ERROR_BROKEN_PIPE))) &&
+          (!opt->is_aborted || !opt->is_aborted(opt->userdata))) {
         efree(&err);
         Sleep(10);
         continue;

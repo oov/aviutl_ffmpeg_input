@@ -37,7 +37,14 @@ struct handle_map_item {
 
 static mtx_t g_handles_mtx = {0};
 static struct hmap g_handles = {0};
-static bool g_exiting = false;
+
+enum runnning_state {
+  rs_unknown = 0,
+  rs_booting = 1,
+  rs_running = 2,
+  rs_exiting = 3,
+};
+static atomic_int g_running_state = rs_unknown;
 
 struct config_thread_context {
   HWND window;
@@ -99,6 +106,9 @@ cleanup:
 }
 
 static BOOL ffmpeg_input_config(HWND window, HINSTANCE dll_hinst) {
+  if (atomic_load(&g_running_state) != rs_running) {
+    return FALSE;
+  }
   (void)dll_hinst;
   error err = eok();
   struct config_thread_context ctx = {
@@ -153,13 +163,12 @@ cleanup:
 }
 
 static BOOL ffmpeg_input_info_get(INPUT_HANDLE ih, INPUT_INFO *iip) {
+  if (atomic_load(&g_running_state) != rs_running || !ih) {
+    return FALSE;
+  }
   mtx_lock(&g_handles_mtx);
   error err = eok();
   struct bridge_event_get_info_response *resp = NULL;
-  if (!g_ipcc || !ih) {
-    goto cleanup;
-  }
-
   struct handle *h = (void *)ih;
   struct ipcclient_response r = {0};
   err = ipcclient_call(g_ipcc,
@@ -293,12 +302,12 @@ cleanup:
 }
 
 static int ffmpeg_input_read_video(INPUT_HANDLE ih, int frame, void *buf) {
+  if (atomic_load(&g_running_state) != rs_running || !ih) {
+    return 0;
+  }
   mtx_lock(&g_handles_mtx);
   error err = eok();
   int written = 0;
-  if (!g_ipcc || !ih) {
-    goto cleanup;
-  }
   err = call_read(ih, frame, 0, buf, &written);
   if (efailed(err)) {
     err = ethru(err);
@@ -313,12 +322,12 @@ cleanup:
 }
 
 static int ffmpeg_input_read_audio(INPUT_HANDLE ih, int start, int length, void *buf) {
+  if (atomic_load(&g_running_state) != rs_running || !ih) {
+    return 0;
+  }
   mtx_lock(&g_handles_mtx);
   error err = eok();
   int written = 0;
-  if (!g_ipcc || !ih) {
-    goto cleanup;
-  }
   err = call_read(ih, start, length, buf, &written);
   if (efailed(err)) {
     err = ethru(err);
@@ -368,12 +377,12 @@ cleanup:
 }
 
 static BOOL ffmpeg_input_close(INPUT_HANDLE ih) {
+  if (atomic_load(&g_running_state) != rs_running || !ih) {
+    return FALSE;
+  }
   mtx_lock(&g_handles_mtx);
   error err = eok();
   bool success = false;
-  if (!g_ipcc || !ih) {
-    goto cleanup;
-  }
   struct handle *h = (void *)ih;
   err = call_close(g_ipcc, h->id, &success);
   if (efailed(err)) {
@@ -444,13 +453,13 @@ cleanup:
 }
 
 static INPUT_HANDLE ffmpeg_input_open(char *filepath) {
+  if (atomic_load(&g_running_state) != rs_running || !filepath) {
+    return NULL;
+  }
   mtx_lock(&g_handles_mtx);
   error err = eok();
   struct handle *h = NULL;
   struct handle tmp = {0};
-  if (!g_ipcc || !filepath) {
-    goto cleanup;
-  }
   err = call_open(g_ipcc, filepath, &tmp);
   if (efailed(err)) {
     err = ethru(err);
@@ -495,6 +504,11 @@ cleanup:
 }
 
 static void process_finished(void *userdata);
+
+static bool ipcc_is_aborted(void *userdata) {
+  (void)userdata;
+  return atomic_load(&g_running_state) != rs_booting;
+}
 
 static NODISCARD error start_process(struct process **const pp, struct ipcclient **const cp) {
   if (!pp || *pp || !cp || *cp) {
@@ -554,6 +568,7 @@ static NODISCARD error start_process(struct process **const pp, struct ipcclient
                              // Remote process may not start immediately due to blocking by security software.
                              // Wait a little longer as it may be unblocked by user interaction.
                              .connect_timeout_msec = 30 * 1000,
+                             .is_aborted = ipcc_is_aborted,
                          });
   if (efailed(err)) {
     err = ethru(err);
@@ -591,16 +606,25 @@ static bool restore_handle(void const *const item, void *const udata) {
 }
 
 static void process_finished(void *userdata) {
+  switch (atomic_load(&g_running_state)) {
+  case rs_booting:
+    // It seems remote process crashed in very early stage.
+    // There is no point in continuing the connection attempt in this situation.
+    atomic_store(&g_running_state, rs_exiting);
+    return;
+  case rs_running:
+    break;
+  default:
+    return;
+  }
   (void)userdata;
   error err = eok();
   HWND window = find_aviutl_window();
   HWND *disabled_windows = NULL;
   struct process *new_process = NULL;
   struct ipcclient *new_ipcc = NULL;
+  atomic_store(&g_running_state, rs_exiting);
   mtx_lock(&g_handles_mtx);
-  if (g_exiting) {
-    goto cleanup;
-  }
   if (g_ipcc) {
     ereport(ipcclient_destroy(&g_ipcc));
   }
@@ -617,6 +641,7 @@ static void process_finished(void *userdata) {
   if (r != IDOK) {
     goto cleanup;
   }
+  atomic_store(&g_running_state, rs_booting);
   err = start_process(&new_process, &new_ipcc);
   if (efailed(err)) {
     err = ethru(err);
@@ -636,6 +661,7 @@ static void process_finished(void *userdata) {
     err = ethru(err);
     goto cleanup;
   }
+  atomic_store(&g_running_state, rs_running);
 cleanup:
   if (efailed(err)) {
     if (new_ipcc) {
@@ -644,7 +670,8 @@ cleanup:
     if (new_process) {
       ereport(process_destroy(&new_process));
     }
-  } else if (!g_exiting) {
+    atomic_store(&g_running_state, rs_unknown);
+  } else {
     g_process = new_process;
     g_ipcc = new_ipcc;
   }
@@ -669,6 +696,7 @@ static BOOL ffmpeg_input_init(void) {
     err = ethru(err);
     goto cleanup;
   }
+  atomic_store(&g_running_state, rs_booting);
   err = start_process(&g_process, &g_ipcc);
   if (efailed(err)) {
     err = ethru(err);
@@ -683,17 +711,16 @@ cleanup:
       mtx_destroy(&g_handles_mtx);
     }
     error_message_box(err, L"ffmpeg Video Reader の初期化に失敗しました。");
+    atomic_store(&g_running_state, rs_unknown);
     return FALSE;
   }
   mtx_unlock(&g_handles_mtx);
+  atomic_store(&g_running_state, rs_running);
   return TRUE;
 }
 
 static BOOL ffmpeg_input_exit(void) {
-  mtx_lock(&g_handles_mtx);
-  g_exiting = true;
-  mtx_unlock(&g_handles_mtx);
-
+  atomic_store(&g_running_state, rs_exiting);
   if (g_ipcc) {
     ereport(ipcclient_destroy(&g_ipcc));
   }

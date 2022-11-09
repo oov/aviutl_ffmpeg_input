@@ -9,7 +9,6 @@
 #include "ffmpegutil.h"
 
 static bool is_output_yuy2 = true;
-static int scaling_algorithm = SWS_FAST_BILINEAR;
 
 struct video {
   AVFormatContext *format_context;
@@ -245,7 +244,7 @@ cleanup:
   return err;
 }
 
-static inline struct SwsContext *create_sws_context(struct video *fp) {
+static inline struct SwsContext *create_sws_context(struct video *fp, enum video_format_scaling_algorithm scaling) {
   int pix_format = AV_PIX_FMT_BGR24;
   if (is_output_yuy2) {
     int const f = fp->codec_context->pix_fmt;
@@ -255,13 +254,49 @@ static inline struct SwsContext *create_sws_context(struct video *fp) {
       fp->yuy2 = true;
     }
   }
+  int sws_flags = 0;
+  switch (scaling) {
+  case video_format_scaling_algorithm_fast_bilinear:
+    sws_flags |= SWS_FAST_BILINEAR;
+    break;
+  case video_format_scaling_algorithm_bilinear:
+    sws_flags |= SWS_BILINEAR;
+    break;
+  case video_format_scaling_algorithm_bicubic:
+    sws_flags |= SWS_BICUBIC;
+    break;
+  case video_format_scaling_algorithm_x:
+    sws_flags |= SWS_X;
+    break;
+  case video_format_scaling_algorithm_point:
+    sws_flags |= SWS_POINT;
+    break;
+  case video_format_scaling_algorithm_area:
+    sws_flags |= SWS_AREA;
+    break;
+  case video_format_scaling_algorithm_bicublin:
+    sws_flags |= SWS_BICUBLIN;
+    break;
+  case video_format_scaling_algorithm_gauss:
+    sws_flags |= SWS_GAUSS;
+    break;
+  case video_format_scaling_algorithm_sinc:
+    sws_flags |= SWS_SINC;
+    break;
+  case video_format_scaling_algorithm_lanczos:
+    sws_flags |= SWS_LANCZOS;
+    break;
+  case video_format_scaling_algorithm_spline:
+    sws_flags |= SWS_SPLINE;
+    break;
+  }
   return sws_getContext(fp->codec_context->width,
                         fp->codec_context->height,
                         fp->codec_context->pix_fmt,
                         fp->codec_context->width,
                         fp->codec_context->height,
                         pix_format,
-                        scaling_algorithm,
+                        sws_flags,
                         NULL,
                         NULL,
                         NULL);
@@ -386,7 +421,7 @@ NODISCARD error video_create(struct video **const vpp,
     goto cleanup;
   }
 
-  fp->sws_context = create_sws_context(fp);
+  fp->sws_context = create_sws_context(fp, opt->scaling);
   if (!fp->sws_context) {
     err = emsg(err_type_generic, err_fail, &native_unmanaged_const(NSTR("sws_getContext failed")));
     goto cleanup;

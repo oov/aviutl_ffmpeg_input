@@ -42,6 +42,7 @@ add_library(ffmpeg_input SHARED
   audio.c
   bridgeclient.c
   bridgeserver.c
+  config.c
   error.c
   ffmpeg.c
   ffmpegutil.c

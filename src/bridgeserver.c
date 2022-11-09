@@ -327,7 +327,7 @@ void __declspec(dllexport) CALLBACK BridgeMainW(HWND window, HINSTANCE hinstance
   g_ipt = get_input_plugin_table();
   if (g_ipt->func_init) {
     if (!g_ipt->func_init()) {
-      err = emsg(err_type_generic, err_fail, &native_unmanaged_const(NSTR("failed to initialize")));
+      err = emsg(err_type_generic, err_fail, &native_unmanaged_const(NSTR("func_init failed")));
       goto cleanup;
     }
     initialized = true;
@@ -385,7 +385,9 @@ cleanup:
   }
   if (initialized) {
     if (g_ipt->func_exit) {
-      g_ipt->func_exit();
+      if (!g_ipt->func_exit()) {
+        ereport(emsg(err_type_generic, err_fail, &native_unmanaged_const(NSTR("func_exit failed"))));
+      }
     }
   }
   if (parent_process) {

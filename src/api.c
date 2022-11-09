@@ -5,6 +5,7 @@
 #include "ovutil/win32.h"
 
 #include "audio.h"
+#include "config.h"
 #include "error.h"
 #include "version.h"
 #include "video.h"
@@ -106,12 +107,23 @@ static INPUT_HANDLE ffmpeg_input_open(char *filepath) {
     return NULL;
   }
   error err = eok();
+  struct config *config = NULL;
   struct file *fp = NULL;
   struct video *v = NULL;
   struct audio *a = NULL;
   struct wstr ws = {0};
   struct info_video vi = {0};
   struct info_audio ai = {0};
+  err = config_create(&config);
+  if (efailed(err)) {
+    err = ethru(err);
+    goto cleanup;
+  }
+  err = config_load(config);
+  if (efailed(err)) {
+    err = ethru(err);
+    goto cleanup;
+  }
   err = from_mbcs(&str_unmanaged_const(filepath), &ws);
   if (efailed(err)) {
     err = ethru(err);
@@ -121,7 +133,8 @@ static INPUT_HANDLE ffmpeg_input_open(char *filepath) {
                      &vi,
                      &(struct video_options){
                          .filepath = ws.ptr,
-                         .prefered_decoders = NULL,
+                         .prefered_decoders = config_get_preferred_decoders(config),
+                         .scaling = config_get_scaling(config),
                      });
   if (efailed(err)) {
     err = ethru(err);
@@ -131,7 +144,7 @@ static INPUT_HANDLE ffmpeg_input_open(char *filepath) {
                      &ai,
                      &(struct audio_options){
                          .filepath = ws.ptr,
-                         .prefered_decoders = NULL,
+                         .prefered_decoders = config_get_preferred_decoders(config),
                      });
   if (efailed(err)) {
     err = ethru(err);
@@ -185,6 +198,9 @@ static INPUT_HANDLE ffmpeg_input_open(char *filepath) {
 
 cleanup:
   ereport(sfree(&ws));
+  if (config) {
+    config_destroy(&config);
+  }
   if (efailed(err)) {
     if (fp) {
       ereport(mem_free(&fp));
@@ -279,10 +295,33 @@ static BOOL ffmpeg_input_exit(void) {
 }
 
 struct config_dialog_props {
+  struct config *config;
   error err;
 };
 
 static wchar_t const config_prop[] = L"config_prop";
+
+static struct {
+  enum video_format_scaling_algorithm const id;
+  wchar_t const *name;
+} scaling_algorithms[] = {
+    {video_format_scaling_algorithm_fast_bilinear, L"fast bilinear"},
+    {video_format_scaling_algorithm_bilinear, L"bilinear"},
+    {video_format_scaling_algorithm_bicubic, L"bicubic"},
+    {video_format_scaling_algorithm_x, L"experimental"},
+    {video_format_scaling_algorithm_point, L"nearest neighbor"},
+    {video_format_scaling_algorithm_area, L"averaging area"},
+    {video_format_scaling_algorithm_bicublin, L"luma bicubic, chroma bilinear"},
+    {video_format_scaling_algorithm_gauss, L"Gaussian"},
+    {video_format_scaling_algorithm_sinc, L"sinc"},
+    {video_format_scaling_algorithm_lanczos, L"Lanczos"},
+    {video_format_scaling_algorithm_spline, L"natural bicubic spline"},
+};
+
+enum config_control {
+  ID_EDT_DECODERS = 1001,
+  ID_CMB_SCALING = 1003,
+};
 
 static INT_PTR CALLBACK config_wndproc(HWND const dlg, UINT const message, WPARAM const wparam, LPARAM const lparam) {
   switch (message) {
@@ -290,6 +329,17 @@ static INT_PTR CALLBACK config_wndproc(HWND const dlg, UINT const message, WPARA
     struct config_dialog_props *const pr = (void *)lparam;
     SetPropW(dlg, config_prop, (HANDLE)pr);
     SetWindowTextW(dlg, "ffmpeg Video Reader " VERSION_WIDE);
+    SetWindowTextA(GetDlgItem(dlg, ID_EDT_DECODERS), config_get_preferred_decoders(pr->config));
+    HWND h = GetDlgItem(dlg, ID_CMB_SCALING);
+    enum video_format_scaling_algorithm const id = config_get_scaling(pr->config);
+    size_t selected_index = 0;
+    for (size_t i = 0, len = sizeof(scaling_algorithms) / sizeof(scaling_algorithms[0]); i < len; ++i) {
+      SendMessageW(h, CB_ADDSTRING, 0, (LPARAM)scaling_algorithms[i].name);
+      if (scaling_algorithms[i].id == id) {
+        selected_index = i;
+      }
+    }
+    SendMessageW(h, CB_SETCURSEL, (WPARAM)selected_index, 0);
     return TRUE;
   }
   case WM_DESTROY:
@@ -298,11 +348,35 @@ static INT_PTR CALLBACK config_wndproc(HWND const dlg, UINT const message, WPARA
   case WM_COMMAND:
     switch (LOWORD(wparam)) {
     case IDOK: {
+      struct str s = {0};
       error err = eok();
       struct config_dialog_props *const pr = (void *)GetPropW(dlg, config_prop);
       if (!pr) {
         err = errg(err_unexpected);
         goto cleanup;
+      }
+      HWND h = GetDlgItem(dlg, ID_EDT_DECODERS);
+      int len = GetWindowTextLengthA(h);
+      err = sgrow(&s, (size_t)len + 1);
+      if (efailed(err)) {
+        err = ethru(err);
+        goto cleanup;
+      }
+      GetWindowTextA(h, s.ptr, len + 1);
+      s.ptr[len] = '\0';
+      s.len = (size_t)len;
+      err = config_set_preferred_decoders(pr->config, s.ptr);
+      if (efailed(err)) {
+        err = ethru(err);
+        goto cleanup;
+      }
+      size_t scaling_index = (size_t)(SendMessageW(GetDlgItem(dlg, ID_CMB_SCALING), CB_GETCURSEL, 0, 0));
+      if (scaling_index < sizeof(scaling_algorithms) / sizeof(scaling_algorithms[0])) {
+        err = config_set_scaling(pr->config, scaling_algorithms[scaling_index].id);
+        if (efailed(err)) {
+          err = ethru(err);
+          goto cleanup;
+        }
       }
     cleanup:
       if (efailed(err)) {
@@ -325,10 +399,20 @@ static INT_PTR CALLBACK config_wndproc(HWND const dlg, UINT const message, WPARA
 
 static BOOL ffmpeg_input_config(HWND window, HINSTANCE dll_hinst) {
   (void)dll_hinst;
-  error err = eok();
   struct config_dialog_props pr = {
+      .config = NULL,
       .err = eok(),
   };
+  error err = config_create(&pr.config);
+  if (efailed(err)) {
+    err = ethru(err);
+    goto cleanup;
+  }
+  err = config_load(pr.config);
+  if (efailed(err)) {
+    err = ethru(err);
+    goto cleanup;
+  }
   INT_PTR r = DialogBoxParamW(get_hinstance(), L"CONFIG", window, config_wndproc, (LPARAM)&pr);
   if (r == 0 || r == -1) {
     if (efailed(pr.err)) {
@@ -342,7 +426,13 @@ static BOOL ffmpeg_input_config(HWND window, HINSTANCE dll_hinst) {
   if (r == IDCANCEL) {
     goto cleanup;
   }
+  err = config_save(pr.config);
+  if (efailed(err)) {
+    err = ethru(err);
+    goto cleanup;
+  }
 cleanup:
+  config_destroy(&pr.config);
   ereport(err);
   return TRUE;
 }
