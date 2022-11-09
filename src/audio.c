@@ -362,7 +362,7 @@ NODISCARD error audio_create(struct audio **const app,
   }
   AVCodec const *const codec = avcodec_find_decoder(fp->stream->codecpar->codec_id);
   if (!codec) {
-    err = emsg(err_type_generic, err_fail, &native_unmanaged_const(NSTR("video decoder not found")));
+    err = emsg(err_type_generic, err_fail, &native_unmanaged_const(NSTR("audio decoder not found")));
     goto cleanup;
   }
 
