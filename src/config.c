@@ -7,6 +7,7 @@
 struct config {
   bool modified;
   struct str preferred_decoders;
+  bool need_postfix;
   enum video_format_scaling_algorithm scaling;
 };
 
@@ -32,6 +33,8 @@ char const *config_get_preferred_decoders(struct config const *const c) {
 
 enum video_format_scaling_algorithm config_get_scaling(struct config const *const c) { return c->scaling; }
 
+bool config_get_need_postfix(struct config const *const c) { return c->need_postfix; }
+
 NODISCARD error config_set_preferred_decoders(struct config *const c, char const *const preferred_decoders) {
   if (!c || !preferred_decoders) {
     return errg(err_invalid_arugment);
@@ -47,6 +50,18 @@ NODISCARD error config_set_preferred_decoders(struct config *const c, char const
   c->modified = true;
 cleanup:
   return err;
+}
+
+NODISCARD error config_set_need_postfix(struct config *const c, bool const need_postfix) {
+  if (!c) {
+    return errg(err_invalid_arugment);
+  }
+  if (c->need_postfix == !!need_postfix) {
+    return eok();
+  }
+  c->need_postfix = !!need_postfix;
+  c->modified = true;
+  return eok();
 }
 
 NODISCARD error config_set_scaling(struct config *const c, enum video_format_scaling_algorithm scaling) {
@@ -129,9 +144,14 @@ static NODISCARD error load(struct config *c) {
     err = ethru(err);
     goto cleanup;
   }
-
-  int scaling = (int)GetPrivateProfileIntA("video", "scaling", 0, filepath.ptr);
-  err = config_set_scaling(c, (enum video_format_scaling_algorithm)scaling);
+  err = config_set_need_postfix(c, GetPrivateProfileIntA("global", "need_postfix", 1, filepath.ptr) != 0);
+  if (efailed(err)) {
+    err = ethru(err);
+    goto cleanup;
+  }
+  err = config_set_scaling(c,
+                           (enum video_format_scaling_algorithm)(GetPrivateProfileIntA(
+                               "video", "scaling", video_format_scaling_algorithm_fast_bilinear, filepath.ptr)));
   if (efailed(err)) {
     err = ethru(err);
     goto cleanup;
@@ -159,6 +179,7 @@ NODISCARD error config_load(struct config *c) {
   ereport(sfree(&c->preferred_decoders));
   c->preferred_decoders = tmp->preferred_decoders;
   tmp->preferred_decoders = (struct str){0};
+  c->need_postfix = tmp->need_postfix;
   c->scaling = tmp->scaling;
   c->modified = false;
 cleanup:
@@ -174,6 +195,7 @@ NODISCARD error config_save(struct config *c) {
     return eok();
   }
   struct str filepath = {0};
+  char buf[32];
   error err = get_config_filename(&filepath);
   if (efailed(err)) {
     err = ethru(err);
@@ -183,7 +205,10 @@ NODISCARD error config_save(struct config *c) {
     err = errhr(HRESULT_FROM_WIN32(GetLastError()));
     goto cleanup;
   }
-  char buf[32];
+  if (!WritePrivateProfileStringA("global", "need_postfix", config_get_need_postfix(c) ? "1" : "0", filepath.ptr)) {
+    err = errhr(HRESULT_FROM_WIN32(GetLastError()));
+    goto cleanup;
+  }
   if (!WritePrivateProfileStringA("video", "scaling", ov_itoa((int64_t)(config_get_scaling(c)), buf), filepath.ptr)) {
     err = errhr(HRESULT_FROM_WIN32(GetLastError()));
     goto cleanup;
