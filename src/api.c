@@ -137,7 +137,7 @@ static INPUT_HANDLE ffmpeg_input_open(char *filepath) {
                      &vi,
                      &(struct video_options){
                          .filepath = ws.ptr,
-                         .prefered_decoders = config_get_preferred_decoders(config),
+                         .preferred_decoders = config_get_preferred_decoders(config),
                          .scaling = config_get_scaling(config),
                      });
   if (efailed(err)) {
@@ -148,7 +148,7 @@ static INPUT_HANDLE ffmpeg_input_open(char *filepath) {
                      &ai,
                      &(struct audio_options){
                          .filepath = ws.ptr,
-                         .prefered_decoders = config_get_preferred_decoders(config),
+                         .preferred_decoders = config_get_preferred_decoders(config),
                      });
   if (efailed(err)) {
     err = ethru(err);

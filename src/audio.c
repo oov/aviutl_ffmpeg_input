@@ -6,7 +6,6 @@
 #endif
 
 #include "ffmpeg.h"
-#include "ffmpegutil.h"
 
 typedef int16_t sample_t;
 static int const g_channels = 2;
@@ -365,34 +364,11 @@ NODISCARD error audio_create(struct audio **const app,
     err = emsg(err_type_generic, err_fail, &native_unmanaged_const(NSTR("audio decoder not found")));
     goto cleanup;
   }
-
-  if (opt->prefered_decoders) {
-    size_t pos = 0;
-    char buf[32];
-    char const *preferred = NULL;
-    while ((preferred = ffmpegutil_find_preferred_decoder(opt->prefered_decoders, codec->name, &pos, buf)) != NULL) {
-      AVCodec const *const c = avcodec_find_decoder_by_name(preferred);
-      if (!c) {
-        continue;
-      }
-      err = ffmpeg_open_codec(c, fp->stream->codecpar, NULL, &fp->codec_context);
-      if (efailed(err)) {
-        err = ethru(err);
-        ereport(err);
-        continue;
-      }
-      fp->codec = c;
-      break;
-    }
-  }
-
-  if (!fp->codec) {
-    err = ffmpeg_open_codec(codec, fp->stream->codecpar, NULL, &fp->codec_context);
-    if (efailed(err)) {
-      err = ethru(err);
-      goto cleanup;
-    }
-    fp->codec = codec;
+  err = ffmpeg_open_preferred_codec(
+      opt->preferred_decoders, codec, fp->stream->codecpar, NULL, &fp->codec, &fp->codec_context);
+  if (efailed(err)) {
+    err = ethru(err);
+    goto cleanup;
   }
 
   fp->frame = av_frame_alloc();

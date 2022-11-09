@@ -45,7 +45,6 @@ add_library(ffmpeg_input SHARED
   config.c
   error.c
   ffmpeg.c
-  ffmpegutil.c
   ffmpeg_input.rc
   file.c
   ipcclient.c
@@ -82,7 +81,8 @@ target_compile_definitions(ffmpeg_input PRIVATE
   "SWRESAMPLE_DLL=L\"${SWRESAMPLE_NAME}.dll\""
 )
 
-add_executable(ffmpeg_test ffmpegutil.c ffmpeg_test.c)
+add_executable(ffmpeg_test ffmpeg_test.c)
+target_link_libraries(ffmpeg_test PRIVATE ${AVCODEC_NAME} ${AVFORMAT_NAME} ${AVUTIL_NAME})
 list(APPEND targets ffmpeg_test)
 add_executable(ipc_test file.c ipcclient.c ipcserver.c ipc_test.c)
 list(APPEND targets ipc_test)

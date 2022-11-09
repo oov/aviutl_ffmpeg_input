@@ -6,7 +6,6 @@
 #endif
 
 #include "ffmpeg.h"
-#include "ffmpegutil.h"
 
 static bool is_output_yuy2 = true;
 
@@ -368,34 +367,11 @@ NODISCARD error video_create(struct video **const vpp,
     err = emsg(err_type_generic, err_fail, &native_unmanaged_const(NSTR("video decoder not found")));
     goto cleanup;
   }
-
-  if (opt->prefered_decoders) {
-    size_t pos = 0;
-    char buf[32];
-    char const *preferred = NULL;
-    while ((preferred = ffmpegutil_find_preferred_decoder(opt->prefered_decoders, codec->name, &pos, buf)) != NULL) {
-      AVCodec const *const c = avcodec_find_decoder_by_name(preferred);
-      if (!c) {
-        continue;
-      }
-      err = ffmpeg_open_codec(c, fp->stream->codecpar, NULL, &fp->codec_context);
-      if (efailed(err)) {
-        err = ethru(err);
-        ereport(err);
-        continue;
-      }
-      fp->codec = c;
-      break;
-    }
-  }
-
-  if (!fp->codec) {
-    err = ffmpeg_open_codec(codec, fp->stream->codecpar, NULL, &fp->codec_context);
-    if (efailed(err)) {
-      err = ethru(err);
-      goto cleanup;
-    }
-    fp->codec = codec;
+  err = ffmpeg_open_preferred_codec(
+      opt->preferred_decoders, codec, fp->stream->codecpar, NULL, &fp->codec, &fp->codec_context);
+  if (efailed(err)) {
+    err = ethru(err);
+    goto cleanup;
   }
 
   // workaround for h264_qsv

@@ -7,7 +7,7 @@ struct audio;
 
 struct audio_options {
   wchar_t const *filepath;
-  char const *prefered_decoders;
+  char const *preferred_decoders;
 };
 
 NODISCARD error audio_create(struct audio **const app,
