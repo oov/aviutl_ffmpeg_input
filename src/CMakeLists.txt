@@ -22,7 +22,7 @@ endif()
 add_custom_target(extract_ffmpeg COMMAND
   ${CMAKE_COMMAND}
   -Dlocal_dir="${PROJECT_BINARY_DIR}"
-  -Durl="https://github.com/oov/ffmpeg-openh264-win/releases/download/rel.2022-10-15/ffmpeg-n5.1.2-4-gf5455889fd-win${FFMPEG_INPUT_BITSIZE}-lgpl-shared-5.1.zip"
+  -Durl="https://github.com/oov/ffmpeg-openh264-win/releases/download/rel.2022-11-10/ffmpeg-n5.1.2-7-ga6e26053c2-win${FFMPEG_INPUT_BITSIZE}-lgpl-shared-5.1.zip"
   -Ddir="ffmpeg${FFMPEG_INPUT_BITSIZE}"
   -P "${CMAKE_SOURCE_DIR}/src/cmake/extract-ffmpeg.cmake"
 )
