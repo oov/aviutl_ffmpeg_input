@@ -82,6 +82,7 @@ target_compile_definitions(ffmpeg_input PRIVATE
 )
 
 add_executable(ffmpeg_test ffmpeg_test.c)
+add_dependencies(ffmpeg_test ${PROJECT_NAME}_format extract_ffmpeg)
 target_link_libraries(ffmpeg_test PRIVATE ${AVCODEC_NAME} ${AVFORMAT_NAME} ${AVUTIL_NAME})
 list(APPEND targets ffmpeg_test)
 add_executable(ipc_test file.c ipcclient.c ipcserver.c ipc_test.c)
