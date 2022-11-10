@@ -37,11 +37,11 @@ https://github.com/oov/aviutl_ffmpeg_input/releases
 インストール
 ------------
 
-導入には 64bit 版の ffmpeg と OpenH264 の DLL を別途用意する必要があります。  
+導入には ffmpeg などを別途用意する必要があります。  
 以下がインストール手順です。
 
 1. `ffmpeg_input.64aui` と `ffmpeg_input-brdg64.aui` を、  
-   `aviutl.exe` と同じ場所か、`plugins` フォルダー内のどちらかに配置
+   `aviutl.exe` と同じ場所か、`plugins` フォルダー内のどちらか一方に配置
 2. プラグインを配置した場所に `ffmpeg64` という名前のフォルダーを作り、  
    以下から `ffmpeg-5.X, LGPL, win64-shared` をダウンロードして解凍、すべて配置  
    （`ffmpeg64` の直下に `LICENSE.txt` があり、`bin` フォルダー内に DLL などがあればOK）  
@@ -52,19 +52,34 @@ https://github.com/oov/aviutl_ffmpeg_input/releases
    （`ffmpeg64\bin\openh264-X.X.X-win64.dll` に置けばOK）  
    bz2 の解凍には [7-zip](https://sevenzip.osdn.jp/) が使えます
 4. 配置したファイルがセキュリティソフトにブロックされないよう、適切に除外設定を行ってください
-5. AviUtl のメニューから `ファイル`→`環境設定`→`入力プラグイン優先度の設定` を選び、`ffmpeg Video Reader Bridge` を `L-SMASH Works File Reader` や `InputPipePlugin` より上に配置してください
+5. AviUtl のメニューから `ファイル`→`環境設定`→`入力プラグイン優先度の設定` を選び、  
+   `ffmpeg Video Reader Bridge` を `L-SMASH Works File Reader` や `InputPipePlugin` より上に配置してください
 
 設定
 ----
 
-設定ダイアログや設定変更可能な項目はまだ存在しません。
+`ファイル`→`環境設定`→`入力プラグインの設定`→`ffmpeg Video Reader Bridgeの設定` を選ぶと設定ダイアログが表示されます。
+
+### 優先するデコーダー
+
+優先的に使用したいデコーダーがある場合に、それらをカンマで区切って指定します。  
+先に書いたものが優先されます。
+
+例えば `h264_cuvid,h264_qsv` と指定すると、`h264` のファイルを読み込もうとしたときに `h264_cuvid` で開き、それに失敗した場合は `h264_qsv` で開きます。
+
+### カラーフォーマット変換時のスケーリングアルゴリズム
+
+これは通常の拡大縮小時の処理が変わる設定ではありません。  
+初期設定である `fast bilinear` は速度と品質のバランスが良いアルゴリズムです。
+
 
 特殊な使い方
 ------------
 
 - `ffmpeg_input-brdg64.aui` を `ffmpeg_input.aui` にリネームすると、プロセス分離を行わずに動作するようになります。  
   ただしこの場合、動作には `ffmpeg32` フォルダーに 32bit 版の ffmpeg を用意する必要があります。
-- `ffmpeg_input-brdg64.aui` を `ffmpeg_input-brdg32.aui` にリネームし、更にこのファイルをコピーして `ffmpeg_input.32aui` という名前で配置すると、32bit 版 ffmpeg でプロセス分離できます。
+- `ffmpeg_input-brdg64.aui` を `ffmpeg_input-brdg32.aui` にリネームし、更にこのファイルをコピーして  
+  `ffmpeg_input.32aui` という名前で配置すると、32bit 版 ffmpeg でプロセス分離できます。
 
 Credits
 -------
