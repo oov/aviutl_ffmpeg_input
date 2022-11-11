@@ -746,9 +746,9 @@ static BOOL ffmpeg_input_exit(void) {
 INPUT_PLUGIN_TABLE *get_input_plugin_bridge_table(void) {
   static INPUT_PLUGIN_TABLE table = {
       .flag = INPUT_PLUGIN_FLAG_VIDEO | INPUT_PLUGIN_FLAG_AUDIO,
-      .name = "ffmpeg Video Reader Bridge",
-      .filefilter = "ffmpeg Supported Files (" VIDEO_EXTS ")\0" VIDEO_EXTS "\0",
-      .information = "ffmpeg Video Reader Bridge " VERSION,
+      .name = "FFmpeg Video Reader Bridge",
+      .filefilter = "FFmpeg Supported Files (" VIDEO_EXTS ")\0" VIDEO_EXTS "\0",
+      .information = "FFmpeg Video Reader Bridge " VERSION,
       .func_init = ffmpeg_input_init,
       .func_exit = ffmpeg_input_exit,
       .func_open = ffmpeg_input_open,

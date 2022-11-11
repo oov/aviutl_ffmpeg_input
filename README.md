@@ -1,7 +1,7 @@
 ffmpeg_input
 ============
 
-[ffmpeg](https://www.ffmpeg.org/) を利用した AviUtl 用の入力プラグインです。  
+[FFmpeg](https://www.ffmpeg.org/) を利用した AviUtl 用の入力プラグインです。  
 以下のような特徴があります。
 
 - `movie-ffmpeg.mp4` などのようにファイル名が `-ffmpeg` が終わるものしか読み込まない
@@ -11,10 +11,13 @@ ffmpeg_input
   - ファイル内容やカット地点によって影響の大きさは変わると思われます
 - InputPipePlugin 相当の機能を最初から内包
   - AviUtl のメモリ空間を必要以上に圧迫しません
-- 64bit 版の ffmpeg を利用
-  - プロセスを分離するついでに 64bit で動作します
-  - ライセンス周辺の諸問題をクリアするために OpenH264 を動的リンクした LGPL 版の ffmpeg を別リポジトリに用意
-    https://github.com/oov/ffmpeg-openh264-win/releases
+- 64bit 版の FFmpeg を利用
+  - ライセンス周辺の諸問題をクリアするために OpenH264 を動的リンクした LGPL 版の FFmpeg を同梱しています  
+    以下のリポジトリーでビルドしています  
+    https://github.com/oov/ffmpeg-openh264-win/releases  
+    このファイルのライセンスについては ffmpeg64/FFMPEG_LICENSE.txt を参照してください。
+  - Cisco-provided binary の OpenH264 を ffmpeg64/bin/ フォルダー内に同梱しています。  
+    このファイルのライセンスについては ffmpeg64/OPENH264_BINARY_LICENSE.txt を参照してください。
 
 ffmpeg_input の動作には AviUtl version 1.00 以降と拡張編集 version 0.92 以降が必要です。
 
@@ -29,6 +32,13 @@ ffmpeg_input を使用したこと及び使用しなかったことによるい�
 
 これに同意できない場合、あなたは ffmpeg_input を使用することができません。
 
+This software uses libraries from the [FFmpeg project](https://www.ffmpeg.org/) under the LGPLv2.1.  
+Copyright (c) 2003-2022 the FFmpeg developers.
+
+This software uses [OpenH264](https://github.com/cisco/openh264) binary that released from Cisco Systems, Inc.  
+OpenH264 Video Codec provided by Cisco Systems, Inc.  
+Copyright (c) 2014 Cisco Systems, Inc. All rights reserved.
+
 ダウンロード
 ------------
 
@@ -37,49 +47,28 @@ https://github.com/oov/aviutl_ffmpeg_input/releases
 インストール
 ------------
 
-導入には ffmpeg などを別途用意する必要があります。  
-以下がインストール手順です。
-
-1. `ffmpeg_input.64aui` と `ffmpeg_input-brdg64.aui` を、  
-   `aviutl.exe` と同じ場所か、`plugins` フォルダー内のどちらか一方に配置
-2. プラグインを配置した場所に `ffmpeg64` という名前のフォルダーを作り、  
-   以下から `ffmpeg-5.X, LGPL, win64-shared` をダウンロードして解凍、すべて配置  
-   （`ffmpeg64` の直下に `LICENSE.txt` があり、`bin` フォルダー内に DLL などがあればOK）  
-   https://github.com/oov/ffmpeg-openh264-win/releases  
-   ※ここ以外の配布品でも動作しますが、GPL 版は使用しないでください（ライセンス上の問題）
-3. 上記のページ内にある `OpenH264 vX.X.X` のリンクを踏み、飛んだ先のページから  
-   `openh264-X.X.X-win64.dll.bz2` をダウンロードして解凍、配置します  
-   （`ffmpeg64\bin\openh264-X.X.X-win64.dll` に置けばOK）  
-   bz2 の解凍には [7-zip](https://sevenzip.osdn.jp/) が使えます
-4. 配置したファイルがセキュリティソフトにブロックされないよう、適切に除外設定を行ってください
-5. AviUtl のメニューから `ファイル`→`環境設定`→`入力プラグイン優先度の設定` を選び、  
-   `ffmpeg Video Reader Bridge` を `L-SMASH Works File Reader` や `InputPipePlugin` より上に配置してください
+1. `ffmpeg_input.64aui` と `ffmpeg_input-brdg64.aui` と `ffmpeg64` を、  
+   `aviutl.exe` と同じ場所か、`plugins` フォルダー内のどちらかにまとめて配置
+2. 配置したファイルがセキュリティソフトにブロックされないよう、適切に除外設定を行ってください
+3. AviUtl のメニューから `ファイル`→`環境設定`→`入力プラグイン優先度の設定` を選び、  
+   `FFmpeg Video Reader Bridge` を `L-SMASH Works File Reader` や `InputPipePlugin` より上に配置してください
 
 設定
 ----
 
-`ファイル`→`環境設定`→`入力プラグインの設定`→`ffmpeg Video Reader Bridgeの設定` を選ぶと設定ダイアログが表示されます。
+`ファイル`→`環境設定`→`入力プラグインの設定`→`FFmpeg Video Reader Bridgeの設定` を選ぶと設定ダイアログが表示されます。
 
 ### 優先するデコーダー
 
 優先的に使用したいデコーダーがある場合に、それらをカンマで区切って指定します。  
 先に書いたものが優先されます。
 
-例えば `h264_cuvid,h264_qsv` と指定すると、`h264` のファイルを読み込もうとしたときに `h264_cuvid` で開き、それに失敗した場合は `h264_qsv` で開きます。
+例えば `h264_cuvid,h264_qsv,libopenh264` と指定すると、`h264` のファイルを読み込もうとしたときに `h264_cuvid` で開き、それに失敗した場合は `h264_qsv` で、それでも駄目なら `libopenh264` で開きます。
 
 ### カラーフォーマット変換時のスケーリングアルゴリズム
 
 これは通常の拡大縮小時の処理が変わる設定ではありません。  
 初期設定である `fast bilinear` は速度と品質のバランスが良いアルゴリズムです。
-
-
-特殊な使い方
-------------
-
-- `ffmpeg_input-brdg64.aui` を `ffmpeg_input.aui` にリネームすると、プロセス分離を行わずに動作するようになります。  
-  ただしこの場合、動作には `ffmpeg32` フォルダーに 32bit 版の ffmpeg を用意する必要があります。
-- `ffmpeg_input-brdg64.aui` を `ffmpeg_input-brdg32.aui` にリネームし、更にこのファイルをコピーして  
-  `ffmpeg_input.32aui` という名前で配置すると、32bit 版 ffmpeg でプロセス分離できます。
 
 Credits
 -------
@@ -345,175 +334,14 @@ Apache License
    See the License for the specific language governing permissions and
    limitations under the License.
 
-### ffmpeg
+### FFmpeg
 
 https://www.ffmpeg.org/
 
-                   GNU LESSER GENERAL PUBLIC LICENSE
-                       Version 3, 29 June 2007
+This software uses libraries from the FFmpeg project under the LGPLv2.1.  
+Copyright (c) 2003-2022 the FFmpeg developers.
 
- Copyright (C) 2007 Free Software Foundation, Inc. <http://fsf.org/>
- Everyone is permitted to copy and distribute verbatim copies
- of this license document, but changing it is not allowed.
-
-
-  This version of the GNU Lesser General Public License incorporates
-the terms and conditions of version 3 of the GNU General Public
-License, supplemented by the additional permissions listed below.
-
-  0. Additional Definitions.
-
-  As used herein, "this License" refers to version 3 of the GNU Lesser
-General Public License, and the "GNU GPL" refers to version 3 of the GNU
-General Public License.
-
-  "The Library" refers to a covered work governed by this License,
-other than an Application or a Combined Work as defined below.
-
-  An "Application" is any work that makes use of an interface provided
-by the Library, but which is not otherwise based on the Library.
-Defining a subclass of a class defined by the Library is deemed a mode
-of using an interface provided by the Library.
-
-  A "Combined Work" is a work produced by combining or linking an
-Application with the Library.  The particular version of the Library
-with which the Combined Work was made is also called the "Linked
-Version".
-
-  The "Minimal Corresponding Source" for a Combined Work means the
-Corresponding Source for the Combined Work, excluding any source code
-for portions of the Combined Work that, considered in isolation, are
-based on the Application, and not on the Linked Version.
-
-  The "Corresponding Application Code" for a Combined Work means the
-object code and/or source code for the Application, including any data
-and utility programs needed for reproducing the Combined Work from the
-Application, but excluding the System Libraries of the Combined Work.
-
-  1. Exception to Section 3 of the GNU GPL.
-
-  You may convey a covered work under sections 3 and 4 of this License
-without being bound by section 3 of the GNU GPL.
-
-  2. Conveying Modified Versions.
-
-  If you modify a copy of the Library, and, in your modifications, a
-facility refers to a function or data to be supplied by an Application
-that uses the facility (other than as an argument passed when the
-facility is invoked), then you may convey a copy of the modified
-version:
-
-   a) under this License, provided that you make a good faith effort to
-   ensure that, in the event an Application does not supply the
-   function or data, the facility still operates, and performs
-   whatever part of its purpose remains meaningful, or
-
-   b) under the GNU GPL, with none of the additional permissions of
-   this License applicable to that copy.
-
-  3. Object Code Incorporating Material from Library Header Files.
-
-  The object code form of an Application may incorporate material from
-a header file that is part of the Library.  You may convey such object
-code under terms of your choice, provided that, if the incorporated
-material is not limited to numerical parameters, data structure
-layouts and accessors, or small macros, inline functions and templates
-(ten or fewer lines in length), you do both of the following:
-
-   a) Give prominent notice with each copy of the object code that the
-   Library is used in it and that the Library and its use are
-   covered by this License.
-
-   b) Accompany the object code with a copy of the GNU GPL and this license
-   document.
-
-  4. Combined Works.
-
-  You may convey a Combined Work under terms of your choice that,
-taken together, effectively do not restrict modification of the
-portions of the Library contained in the Combined Work and reverse
-engineering for debugging such modifications, if you also do each of
-the following:
-
-   a) Give prominent notice with each copy of the Combined Work that
-   the Library is used in it and that the Library and its use are
-   covered by this License.
-
-   b) Accompany the Combined Work with a copy of the GNU GPL and this license
-   document.
-
-   c) For a Combined Work that displays copyright notices during
-   execution, include the copyright notice for the Library among
-   these notices, as well as a reference directing the user to the
-   copies of the GNU GPL and this license document.
-
-   d) Do one of the following:
-
-       0) Convey the Minimal Corresponding Source under the terms of this
-       License, and the Corresponding Application Code in a form
-       suitable for, and under terms that permit, the user to
-       recombine or relink the Application with a modified version of
-       the Linked Version to produce a modified Combined Work, in the
-       manner specified by section 6 of the GNU GPL for conveying
-       Corresponding Source.
-
-       1) Use a suitable shared library mechanism for linking with the
-       Library.  A suitable mechanism is one that (a) uses at run time
-       a copy of the Library already present on the user's computer
-       system, and (b) will operate properly with a modified version
-       of the Library that is interface-compatible with the Linked
-       Version.
-
-   e) Provide Installation Information, but only if you would otherwise
-   be required to provide such information under section 6 of the
-   GNU GPL, and only to the extent that such information is
-   necessary to install and execute a modified version of the
-   Combined Work produced by recombining or relinking the
-   Application with a modified version of the Linked Version. (If
-   you use option 4d0, the Installation Information must accompany
-   the Minimal Corresponding Source and Corresponding Application
-   Code. If you use option 4d1, you must provide the Installation
-   Information in the manner specified by section 6 of the GNU GPL
-   for conveying Corresponding Source.)
-
-  5. Combined Libraries.
-
-  You may place library facilities that are a work based on the
-Library side by side in a single library together with other library
-facilities that are not Applications and are not covered by this
-License, and convey such a combined library under terms of your
-choice, if you do both of the following:
-
-   a) Accompany the combined library with a copy of the same work based
-   on the Library, uncombined with any other library facilities,
-   conveyed under the terms of this License.
-
-   b) Give prominent notice with the combined library that part of it
-   is a work based on the Library, and explaining where to find the
-   accompanying uncombined form of the same work.
-
-  6. Revised Versions of the GNU Lesser General Public License.
-
-  The Free Software Foundation may publish revised and/or new versions
-of the GNU Lesser General Public License from time to time. Such new
-versions will be similar in spirit to the present version, but may
-differ in detail to address new problems or concerns.
-
-  Each version is given a distinguishing version number. If the
-Library as you received it specifies that a certain numbered version
-of the GNU Lesser General Public License "or any later version"
-applies to it, you have the option of following the terms and
-conditions either of that published version or of any later version
-published by the Free Software Foundation. If the Library as you
-received it does not specify a version number of the GNU Lesser
-General Public License, you may choose any version of the GNU Lesser
-General Public License ever published by the Free Software Foundation.
-
-  If the Library as you received it specifies that a proxy can decide
-whether future versions of the GNU Lesser General Public License shall
-apply, that proxy's public statement of acceptance of any version is
-permanent authorization for you to choose that version for the
-Library.
+See ffmpeg64/FFMPEG_LICENSE.txt for details.
 
 ### hashmap.c
 
@@ -542,6 +370,16 @@ FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR
 COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER
 IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN
 CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
+
+### OpenH264
+
+https://github.com/cisco/openh264
+
+This software uses OpenH264 binary that released from Cisco Systems, Inc.  
+OpenH264 Video Codec provided by Cisco Systems, Inc.  
+Copyright (c) 2014 Cisco Systems, Inc. All rights reserved.
+
+See ffmpeg64/OPENH264_BINARY_LICENSE.txt for details.
 
 ### TinyCThread
 

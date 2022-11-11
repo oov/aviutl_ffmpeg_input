@@ -15,21 +15,27 @@ add_custom_target(${PROJECT_NAME}_generate_version_h COMMAND
 
 if(CMAKE_SIZEOF_VOID_P EQUAL 8)
   set(FFMPEG_INPUT_BITSIZE 64)
+  set(FFMPEG_INPUT_DLLEXT 64aui)
 elseif(CMAKE_SIZEOF_VOID_P EQUAL 4)
   set(FFMPEG_INPUT_BITSIZE 32)
+  set(FFMPEG_INPUT_DLLEXT aui)
 endif()
 
 add_custom_target(extract_ffmpeg COMMAND
   ${CMAKE_COMMAND}
   -Dlocal_dir="${PROJECT_BINARY_DIR}"
-  -Durl="https://github.com/oov/ffmpeg-openh264-win/releases/download/rel.2022-11-10/ffmpeg-n5.1.2-7-ga6e26053c2-win${FFMPEG_INPUT_BITSIZE}-lgpl-shared-5.1.zip"
+  -Dffmpeg="https://github.com/oov/ffmpeg-openh264-win/releases/download/rel.2022-11-10/ffmpeg-n5.1.2-7-ga6e26053c2-win${FFMPEG_INPUT_BITSIZE}-lgpl-shared-5.1.zip"
+  -Dopenh264="http://ciscobinary.openh264.org/openh264-2.3.1-win${FFMPEG_INPUT_BITSIZE}.dll.bz2"
+  -Dopenh264_license="http://www.openh264.org/BINARY_LICENSE.txt"
   -Ddir="ffmpeg${FFMPEG_INPUT_BITSIZE}"
   -P "${CMAKE_SOURCE_DIR}/src/cmake/extract-ffmpeg.cmake"
 )
 
 add_custom_target(copy_related_files
   COMMAND ${CMAKE_COMMAND} -E copy "${CMAKE_CURRENT_SOURCE_DIR}/../README.md" "${EXPORT_DIR}/ffmpeg_input.txt"
+  COMMAND ${CMAKE_COMMAND} -E copy_directory "${PROJECT_BINARY_DIR}/ffmpeg${FFMPEG_INPUT_BITSIZE}" "${EXPORT_DIR}/ffmpeg${FFMPEG_INPUT_BITSIZE}"
 )
+add_dependencies(copy_related_files extract_ffmpeg)
 
 find_program(CLANG_FORMAT_EXE clang-format)
 file(GLOB sources "${CMAKE_CURRENT_SOURCE_DIR}/*.c" "${CMAKE_CURRENT_SOURCE_DIR}/*.h")
@@ -55,7 +61,7 @@ add_library(ffmpeg_input SHARED
 )
 list(APPEND targets ffmpeg_input)
 set_target_properties(ffmpeg_input PROPERTIES
-  OUTPUT_NAME "ffmpeg_input.${FFMPEG_INPUT_BITSIZE}aui"
+  OUTPUT_NAME "ffmpeg_input.${FFMPEG_INPUT_DLLEXT}"
   PREFIX ""
   SUFFIX ""
   RUNTIME_OUTPUT_DIRECTORY "${EXPORT_DIR}"

@@ -323,6 +323,7 @@ static struct {
 };
 
 enum config_control {
+  ID_BTN_ABOUT = 100,
   ID_EDT_DECODERS = 1001,
   ID_CMB_SCALING = 1003,
 };
@@ -332,7 +333,7 @@ static INT_PTR CALLBACK config_wndproc(HWND const dlg, UINT const message, WPARA
   case WM_INITDIALOG: {
     struct config_dialog_props *const pr = (void *)lparam;
     SetPropW(dlg, config_prop, (HANDLE)pr);
-    SetWindowTextW(dlg, "ffmpeg Video Reader " VERSION_WIDE);
+    SetWindowTextW(dlg, "FFmpeg Video Reader " VERSION_WIDE);
     SetWindowTextA(GetDlgItem(dlg, ID_EDT_DECODERS), config_get_preferred_decoders(pr->config));
     HWND h = GetDlgItem(dlg, ID_CMB_SCALING);
     enum video_format_scaling_algorithm const id = config_get_scaling(pr->config);
@@ -396,6 +397,16 @@ static INT_PTR CALLBACK config_wndproc(HWND const dlg, UINT const message, WPARA
     case IDCANCEL:
       EndDialog(dlg, IDCANCEL);
       return TRUE;
+    case ID_BTN_ABOUT:
+      message_box(dlg,
+                  L"This software uses libraries from the FFmpeg project under the LGPLv2.1.\r\n"
+                  L"Copyright (c) 2003-2022 the FFmpeg developers.\r\n\r\n"
+                  L"This software uses OpenH264 binary that released from Cisco Systems, Inc.\r\n"
+                  L"OpenH264 Video Codec provided by Cisco Systems, Inc.\r\n"
+                  L"Copyright (c) 2014 Cisco Systems, Inc. All rights reserved.\r\n",
+                  L"About",
+                  MB_OK);
+      return TRUE;
     }
     break;
   }
@@ -448,9 +459,9 @@ cleanup:
 INPUT_PLUGIN_TABLE *get_input_plugin_table(void) {
   static INPUT_PLUGIN_TABLE table = {
       .flag = INPUT_PLUGIN_FLAG_VIDEO | INPUT_PLUGIN_FLAG_AUDIO,
-      .name = "ffmpeg Video Reader",
-      .filefilter = "ffmpeg Supported Files (" VIDEO_EXTS ")\0" VIDEO_EXTS "\0",
-      .information = "ffmpeg Video Reader " VERSION,
+      .name = "FFmpeg Video Reader",
+      .filefilter = "FFmpeg Supported Files (" VIDEO_EXTS ")\0" VIDEO_EXTS "\0",
+      .information = "FFmpeg Video Reader " VERSION,
       .func_init = ffmpeg_input_init,
       .func_exit = ffmpeg_input_exit,
       .func_open = ffmpeg_input_open,

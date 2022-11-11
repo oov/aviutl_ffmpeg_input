@@ -72,6 +72,13 @@ jobs:
             
             - [ffmpeg_input_${{ steps.get_version.outputs.tag }}.zip](https://github.com/oov/aviutl_ffmpeg_input/releases/download/${{ steps.get_version.outputs.tag }}/ffmpeg_input_${{ steps.get_version.outputs.tag }}.zip)
             
+            This software uses libraries from the [FFmpeg project](https://www.ffmpeg.org/) under the LGPLv2.1.  
+            Copyright (c) 2003-2022 the FFmpeg developers.
+            
+            This software uses [OpenH264](https://github.com/cisco/openh264) binary that released from Cisco Systems, Inc.  
+            OpenH264 Video Codec provided by Cisco Systems, Inc.  
+            Copyright (c) 2014 Cisco Systems, Inc. All rights reserved.
+            
             ### 変更点
             
             - ＊＊＊＊
