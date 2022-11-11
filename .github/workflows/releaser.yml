@@ -19,7 +19,7 @@ jobs:
           - msystem: CLANG64
             arch: clang-x86_64
     steps:
-      - uses: actions/checkout@v2
+      - uses: actions/checkout@v3
         with:
           submodules: recursive
       - uses: msys2/setup-msys2@v2
@@ -40,7 +40,7 @@ jobs:
           cd build
           rm -rf CMakeCache.txt && cmake -GNinja -DCMAKE_C_COMPILER=clang -DCMAKE_C_STANDARD=11 -DCMAKE_C_STANDARD_REQUIRED=ON -DCMAKE_C_EXTENSIONS=OFF -DCMAKE_EXPORT_COMPILE_COMMANDS=ON -DLEAK_DETECTOR=OFF -DALLOCATE_LOGGER=OFF -DCMAKE_BUILD_TYPE=Release -DCMAKE_RC_COMPILER=llvm-rc -DCMAKE_RC_FLAGS="-C 65001" .. && cmake --build . && ctest --output-on-failure
       - name: Upload binaries
-        uses: actions/upload-artifact@v2
+        uses: actions/upload-artifact@v3
         with:
           name: bin
           path: |
@@ -51,12 +51,12 @@ jobs:
     steps:
       - name: Get the version
         id: get_version
-        run: echo ::set-output name=tag::${GITHUB_REF/refs\/tags\//}
+        run: echo "tag=${GITHUB_REF/refs\/tags\//}" >> $GITHUB_OUTPUT
       - name: Download artifacts
-        uses: actions/download-artifact@v2
+        uses: actions/download-artifact@v3
       - name: Zip
         run: |
-          cd bin && mv ffmpeg_input.32aui ffmpeg_input-brdg64.aui && zip -r ../package.zip * && cd ..
+          cd bin && mv ffmpeg_input.aui ffmpeg_input-brdg64.aui && rm -rf ffmpeg32 && zip -r ../package.zip * && cd ..
       - name: Create Release
         id: create_release
         uses: actions/create-release@v1
