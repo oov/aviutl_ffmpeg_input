@@ -24,7 +24,7 @@ endif()
 add_custom_target(extract_ffmpeg COMMAND
   ${CMAKE_COMMAND}
   -Dlocal_dir="${PROJECT_BINARY_DIR}"
-  -Dffmpeg="https://github.com/oov/ffmpeg-openh264-win/releases/download/rel.2022-11-10/ffmpeg-n5.1.2-7-ga6e26053c2-win${FFMPEG_INPUT_BITSIZE}-lgpl-shared-5.1.zip"
+  -Dffmpeg="https://github.com/oov/ffmpeg-openh264-win/releases/download/rel.2022-11-11/ffmpeg-n5.1.2-7-ga6e26053c2-win${FFMPEG_INPUT_BITSIZE}-lgpl-shared-5.1.zip"
   -Dopenh264="http://ciscobinary.openh264.org/openh264-2.3.1-win${FFMPEG_INPUT_BITSIZE}.dll.bz2"
   -Dopenh264_license="http://www.openh264.org/BINARY_LICENSE.txt"
   -Ddir="ffmpeg${FFMPEG_INPUT_BITSIZE}"
