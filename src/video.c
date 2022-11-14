@@ -34,7 +34,7 @@ static inline void get_info(struct video const *const v, struct info_video *cons
   vi->frames = av_rescale_q(v->format_context->duration, v->stream->avg_frame_rate, av_inv_q(AV_TIME_BASE_Q));
 #ifndef NDEBUG
   char s[256];
-  ov_snprintf(s, 256, "v duration: %lld, samples: %lld", v->format_context->duration, vi->frames);
+  ov_snprintf(s, 256, "v duration: %lld, frames: %lld", v->format_context->duration, vi->frames);
   OutputDebugStringA(s);
 #endif
 }
@@ -58,6 +58,12 @@ static inline void calc_current_frame(struct video *fp) {
 }
 
 static NODISCARD error grab(struct video *fp) {
+#ifndef NDEBUG
+  char s[256];
+  ov_snprintf(s, 256, "current_frame: %lld", fp->current_frame);
+  OutputDebugStringA(s);
+#endif
+
   error err = eok();
   int r = 0;
 receive_frame:

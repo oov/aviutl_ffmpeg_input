@@ -21,16 +21,26 @@ failed:
   return err(err_type_errno, errnum);
 }
 
+struct w32file {
+  HANDLE h;
+  AVIOContext *ctx;
+};
+
 static int w32read(void *opaque, uint8_t *buf, int buf_size) {
+  struct w32file *file = opaque;
   DWORD read;
-  if (!ReadFile((HANDLE)opaque, (void *)buf, (DWORD)buf_size, &read, NULL)) {
+  if (!ReadFile(file->h, (void *)buf, (DWORD)buf_size, &read, NULL)) {
     errno = EIO;
     return 0;
+  }
+  if (read == 0) {
+    file->ctx->eof_reached = 1;
   }
   return (int)read;
 }
 
 static int64_t w32seek(void *opaque, int64_t offset, int whence) {
+  struct w32file *file = opaque;
   DWORD w;
   switch (whence) {
   case SEEK_SET:
@@ -46,7 +56,7 @@ static int64_t w32seek(void *opaque, int64_t offset, int whence) {
     return -1; // failed
   }
   LARGE_INTEGER pos;
-  if (!SetFilePointerEx((HANDLE)opaque, (LARGE_INTEGER){.QuadPart = offset}, &pos, w)) {
+  if (!SetFilePointerEx(file->h, (LARGE_INTEGER){.QuadPart = offset}, &pos, w)) {
     errno = EIO;
     return -1;
   }
@@ -59,6 +69,7 @@ NODISCARD error ffmpeg_create_format_context(wchar_t const *const filename,
   error err = eok();
   HANDLE h = INVALID_HANDLE_VALUE;
   AVFormatContext *ctx = NULL;
+  struct w32file *file = NULL;
   unsigned char *buffer = NULL;
   h = CreateFileW(filename, GENERIC_READ, FILE_SHARE_READ, NULL, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL);
   if (h == INVALID_HANDLE_VALUE) {
@@ -70,21 +81,33 @@ NODISCARD error ffmpeg_create_format_context(wchar_t const *const filename,
     err = emsg(err_type_generic, err_fail, &native_unmanaged_const(NSTR("avformat_alloc_context failed")));
     goto cleanup;
   }
+  file = av_malloc(sizeof(struct w32file));
+  if (!file) {
+    err = emsg(err_type_generic, err_fail, &native_unmanaged_const(NSTR("av_malloc failed")));
+    goto cleanup;
+  }
+  *file = (struct w32file){
+      .h = h,
+  };
   buffer = av_malloc(buffer_size);
   if (!buffer) {
     err = emsg(err_type_generic, err_fail, &native_unmanaged_const(NSTR("av_malloc failed")));
     goto cleanup;
   }
-  ctx->pb = avio_alloc_context(buffer, (int)buffer_size, 0, h, w32read, NULL, w32seek);
+  ctx->pb = avio_alloc_context(buffer, (int)buffer_size, 0, file, w32read, NULL, w32seek);
   if (!ctx->pb) {
     err = emsg(err_type_generic, err_fail, &native_unmanaged_const(NSTR("avio_alloc_context failed")));
     goto cleanup;
   }
+  file->ctx = ctx->pb;
   *format_context = ctx;
 cleanup:
   if (efailed(err)) {
     if (buffer) {
       av_free(buffer);
+    }
+    if (file) {
+      av_free(file);
     }
     if (ctx) {
       if (ctx->pb) {
@@ -101,7 +124,9 @@ cleanup:
 
 void ffmpeg_destroy_format_context(AVFormatContext **const format_context) {
   if ((*format_context)->pb->opaque) {
-    CloseHandle((*format_context)->pb->opaque);
+    struct w32file *file = (*format_context)->pb->opaque;
+    CloseHandle(file->h);
+    av_freep(&(*format_context)->pb->opaque);
   }
   avformat_close_input(format_context);
 }
