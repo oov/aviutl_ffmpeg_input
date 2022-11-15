@@ -204,19 +204,6 @@ cleanup:
   return (INPUT_HANDLE)fp;
 }
 
-#define TOSTR3(name, ver) L##name L##ver
-#define TOSTR2(name, ver) TOSTR3(name, #ver)
-#define TOSTR(name, ver) TOSTR2(name, ver)
-static wchar_t const *const ffmpeg_dll_names[5] = {
-    TOSTR("avcodec-", LIBAVCODEC_VERSION_MAJOR),
-    TOSTR("avformat-", LIBAVFORMAT_VERSION_MAJOR),
-    TOSTR("avutil-", LIBAVUTIL_VERSION_MAJOR),
-    TOSTR("swscale-", LIBSWSCALE_VERSION_MAJOR),
-    TOSTR("swresample-", LIBSWRESAMPLE_VERSION_MAJOR),
-};
-#undef TOSTR
-#undef TOSTR2
-#undef TOSTR3
 static HANDLE ffmpeg_dll_handles[5] = {0};
 
 static BOOL ffmpeg_input_init(void) {
@@ -253,12 +240,74 @@ static BOOL ffmpeg_input_init(void) {
   old_search_path.len = searchlen;
 
   SetDllDirectoryW(module_dir.ptr);
-  for (size_t i = 0; i < sizeof(ffmpeg_dll_names) / sizeof(ffmpeg_dll_names[0]); ++i) {
-    ffmpeg_dll_handles[i] = LoadLibraryW(ffmpeg_dll_names[i]);
+#define TOSTR3(name, ver) L##name L##ver
+#define TOSTR2(name, ver) TOSTR3(name, #ver)
+#define TOSTR(name, ver) TOSTR2(name, ver)
+  static struct ffmpeg_dll {
+    wchar_t const *name;
+    unsigned compiled_version;
+    unsigned (*dynamic_version)(void);
+    const char *(*dynamic_license)(void);
+  } const ffmpeg_dll[5] = {
+      {
+          .name = TOSTR("avcodec-", LIBAVCODEC_VERSION_MAJOR),
+          .compiled_version = LIBAVCODEC_VERSION_INT,
+          .dynamic_version = avcodec_version,
+          .dynamic_license = avcodec_license,
+      },
+      {
+          .name = TOSTR("avformat-", LIBAVFORMAT_VERSION_MAJOR),
+          .compiled_version = LIBAVFORMAT_VERSION_INT,
+          .dynamic_version = avformat_version,
+          .dynamic_license = avformat_license,
+      },
+      {
+          .name = TOSTR("avutil-", LIBAVUTIL_VERSION_MAJOR),
+          .compiled_version = LIBAVUTIL_VERSION_INT,
+          .dynamic_version = avutil_version,
+          .dynamic_license = avutil_license,
+      },
+      {
+          .name = TOSTR("swscale-", LIBSWSCALE_VERSION_MAJOR),
+          .compiled_version = LIBSWSCALE_VERSION_INT,
+          .dynamic_version = swscale_version,
+          .dynamic_license = swscale_license,
+      },
+      {
+          .name = TOSTR("swresample-", LIBSWRESAMPLE_VERSION_MAJOR),
+          .compiled_version = LIBSWRESAMPLE_VERSION_INT,
+          .dynamic_version = swresample_version,
+          .dynamic_license = swresample_license,
+      },
+  };
+#undef TOSTR
+#undef TOSTR2
+#undef TOSTR3
+  for (size_t i = 0; i < sizeof(ffmpeg_dll) / sizeof(ffmpeg_dll[0]); ++i) {
+    ffmpeg_dll_handles[i] = LoadLibraryW(ffmpeg_dll[i].name);
     if (!ffmpeg_dll_handles[i]) {
-      struct wstr ws = {0};
-      ereport(scpym(&ws, module_dir.ptr, ffmpeg_dll_names[i], L" を開けませんでした。"));
-      err = emsg(err_type_hresult, HRESULT_FROM_WIN32(GetLastError()), &ws);
+      wchar_t buf[1024];
+      wsprintfW(buf, L"%s を開けませんでした。", ffmpeg_dll[i].name);
+      err = emsg(err_type_hresult, HRESULT_FROM_WIN32(GetLastError()), &native_unmanaged_const(buf));
+      goto cleanup;
+    }
+    if (!strstr(ffmpeg_dll[i].dynamic_license(), "LGPL")) {
+      wchar_t buf[1024];
+      wsprintfW(buf,
+                L"%s が LGPL 版ではないため処理を続行できません。\r\n検出されたライセンス: %hs",
+                ffmpeg_dll[i].name,
+                ffmpeg_dll[i].dynamic_license());
+      err = emsg(err_type_generic, err_abort, &native_unmanaged_const(buf));
+      goto cleanup;
+    }
+    if (AV_VERSION_MAJOR(ffmpeg_dll[i].compiled_version) != AV_VERSION_MAJOR(ffmpeg_dll[i].dynamic_version())) {
+      wchar_t buf[1024];
+      wsprintfW(buf,
+                L"%s のバージョンが一致しません。\r\n必要なバージョン: %d\r\nDLLのバージョン: %d",
+                ffmpeg_dll[i].name,
+                AV_VERSION_MAJOR(ffmpeg_dll[i].compiled_version),
+                AV_VERSION_MAJOR(ffmpeg_dll[i].dynamic_version()));
+      err = emsg(err_type_generic, err_abort, &native_unmanaged_const(buf));
       goto cleanup;
     }
   }
@@ -316,6 +365,12 @@ enum config_control {
   ID_EDT_DECODERS = 1001,
   ID_CMB_SCALING = 1003,
 };
+
+static wchar_t *ver_to_str(wchar_t *const buf, char const *const ident, unsigned int ver) {
+  wsprintfW(
+      buf, L"  %hs linked to %d.%d.%d\r\n", ident, AV_VERSION_MAJOR(ver), AV_VERSION_MINOR(ver), AV_VERSION_MICRO(ver));
+  return buf;
+}
 
 static INT_PTR CALLBACK config_wndproc(HWND const dlg, UINT const message, WPARAM const wparam, LPARAM const lparam) {
   switch (message) {
@@ -386,16 +441,30 @@ static INT_PTR CALLBACK config_wndproc(HWND const dlg, UINT const message, WPARA
     case IDCANCEL:
       EndDialog(dlg, IDCANCEL);
       return TRUE;
-    case ID_BTN_ABOUT:
-      message_box(dlg,
-                  L"This software uses libraries from the FFmpeg project under the LGPLv2.1.\r\n"
-                  L"Copyright (c) 2003-2022 the FFmpeg developers.\r\n\r\n"
-                  L"This software uses OpenH264 binary that released from Cisco Systems, Inc.\r\n"
-                  L"OpenH264 Video Codec provided by Cisco Systems, Inc.\r\n"
-                  L"Copyright (c) 2014 Cisco Systems, Inc. All rights reserved.\r\n",
-                  L"About",
-                  MB_OK);
+    case ID_BTN_ABOUT: {
+      wchar_t buf[2048];
+      wchar_t tmp[256];
+      wcscpy(buf,
+             L"This software uses libraries from the FFmpeg project under the LGPLv2.1.\r\n"
+             L"Copyright (c) 2003-2022 the FFmpeg developers.\r\n");
+      ver_to_str(tmp, LIBAVCODEC_IDENT, avcodec_version());
+      wcscat(buf, tmp);
+      ver_to_str(tmp, LIBAVFORMAT_IDENT, avformat_version());
+      wcscat(buf, tmp);
+      ver_to_str(tmp, LIBAVUTIL_IDENT, avutil_version());
+      wcscat(buf, tmp);
+      ver_to_str(tmp, LIBSWSCALE_IDENT, swscale_version());
+      wcscat(buf, tmp);
+      ver_to_str(tmp, LIBSWRESAMPLE_IDENT, swresample_version());
+      wcscat(buf, tmp);
+      wcscat(buf, L"\r\n");
+      wcscat(buf,
+             L"This software uses OpenH264 binary that released from Cisco Systems, Inc.\r\n"
+             L"OpenH264 Video Codec provided by Cisco Systems, Inc.\r\n"
+             L"Copyright (c) 2014 Cisco Systems, Inc. All rights reserved.\r\n");
+      message_box(dlg, buf, L"About", MB_OK);
       return TRUE;
+    }
     }
     break;
   }
