@@ -1,12 +1,75 @@
 
 cmake_minimum_required(VERSION 3.0)
-project(aviutl_ffmpeg_input NONE)
+project(aviutl_ffmpeg_input C)
 enable_testing()
+
+if(CMAKE_SIZEOF_VOID_P EQUAL 8)
+  set(FFMPEG_INPUT_BITSIZE 64)
+  set(FFMPEG_INPUT_DLLEXT 64aui)
+elseif(CMAKE_SIZEOF_VOID_P EQUAL 4)
+  set(FFMPEG_INPUT_BITSIZE 32)
+  set(FFMPEG_INPUT_DLLEXT aui)
+else()
+  message(FATAL_ERROR "failed to detect environment")
+endif()
 
 set(EXPORT_DIR_NAME "bin" CACHE STRING "export directory")
 if ("${EXPORT_DIR_NAME}" STREQUAL "")
   set(EXPORT_DIR_NAME "bin" CACHE STRING "export directory" FORCE)
 endif()
-set(EXPORT_DIR "${PROJECT_BINARY_DIR}/${EXPORT_DIR_NAME}")
+set(EXPORT_DIR "${CMAKE_CURRENT_BINARY_DIR}/${EXPORT_DIR_NAME}")
+
+set(FFMPEG_URL "https://github.com/oov/ffmpeg-openh264-win/releases/download/rel.2022-11-11/ffmpeg-n5.1.2-7-ga6e26053c2-win${FFMPEG_INPUT_BITSIZE}-lgpl-shared-5.1.zip")
+set(OPENH264_URL "http://ciscobinary.openh264.org/openh264-2.3.1-win${FFMPEG_INPUT_BITSIZE}.dll.bz2")
+set(OPENH264_LICENSE_URL "http://www.openh264.org/BINARY_LICENSE.txt")
+set(FFMPEG_DIR "${CMAKE_CURRENT_BINARY_DIR}/ffmpeg${FFMPEG_INPUT_BITSIZE}")
+
+string(REGEX MATCH "[^/]+$" FFMPEG_ARCHIVE_NAME "${FFMPEG_URL}")
+set(FFMPEG_ARCHIVE_PATH "${CMAKE_CURRENT_BINARY_DIR}/${FFMPEG_ARCHIVE_NAME}")
+if(NOT EXISTS "${FFMPEG_ARCHIVE_PATH}")
+  file(DOWNLOAD "${FFMPEG_URL}" "${FFMPEG_ARCHIVE_PATH}")
+endif()
+
+string(REGEX MATCH "[^/]+$" OPENH264_ARCHIVE_NAME "${OPENH264_URL}")
+set(OPENH264_ARCHIVE_PATH "${CMAKE_CURRENT_BINARY_DIR}/${OPENH264_ARCHIVE_NAME}")
+if(NOT EXISTS "${OPENH264_ARCHIVE_PATH}")
+  file(DOWNLOAD "${OPENH264_URL}" "${OPENH264_ARCHIVE_PATH}")
+endif()
+
+string(REGEX MATCH "[^/]+$" OPENH264_LICENSE_NAME "${OPENH264_LICENSE_URL}")
+set(OPENH264_LICENSE_PATH "${CMAKE_CURRENT_BINARY_DIR}/${OPENH264_LICENSE_NAME}")
+if(NOT EXISTS "${OPENH264_LICENSE_PATH}")
+  file(DOWNLOAD "${OPENH264_LICENSE_URL}" "${OPENH264_LICENSE_PATH}")
+endif()
+
+if(NOT EXISTS "${FFMPEG_DIR}")
+  find_program(BUNZIP2 bunzip2)
+  string(REGEX REPLACE "\\.[^.]+$" "" FFMPEG_ARCHIVE_NOEXT "${FFMPEG_ARCHIVE_NAME}")
+  string(REGEX MATCH "[^/]+\\.dll" OPENH264_DLLNAME "${OPENH264_URL}")
+  execute_process(
+    COMMAND ${CMAKE_COMMAND} -E tar xzvf ${FFMPEG_ARCHIVE_PATH}
+    COMMAND ${BUNZIP2} -d -k ${OPENH264_ARCHIVE_PATH}
+    WORKING_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}"
+  )
+  file(RENAME "${CMAKE_CURRENT_BINARY_DIR}/${FFMPEG_ARCHIVE_NOEXT}" "${FFMPEG_DIR}")
+  file(RENAME "${CMAKE_CURRENT_BINARY_DIR}/${OPENH264_DLLNAME}" "${FFMPEG_DIR}/bin/${OPENH264_DLLNAME}")
+  file(RENAME "${FFMPEG_DIR}/LICENSE.txt" "${FFMPEG_DIR}/FFMPEG_LICENSE.txt")
+  file(RENAME "${CMAKE_CURRENT_BINARY_DIR}/${OPENH264_LICENSE_NAME}" "${FFMPEG_DIR}/${OPENH264_LICENSE_NAME}")
+endif()
+
+# extract version numbers
+foreach(name IN ITEMS avcodec avdevice avfilter avformat avutil swresample swscale)
+  set("header_path" "${FFMPEG_DIR}/include/lib${name}")
+  if(EXISTS "${header_path}/version_major.h")
+    set(header_path "${header_path}/version_major.h")
+  else()
+    set(header_path "${header_path}/version.h")
+  endif()
+  file(READ "${header_path}" header)
+  string(REGEX MATCH "#define [A-Z]+_VERSION_MAJOR[ \t]+([0-9]+)" _ ${header})
+  string(TOUPPER "${name}_version" name)
+  set("${name}" ${CMAKE_MATCH_1})
+  message("${name} version: ${CMAKE_MATCH_1}")
+endforeach()
 
 add_subdirectory(src)

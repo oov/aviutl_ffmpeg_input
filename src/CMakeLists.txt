@@ -13,29 +13,10 @@ add_custom_target(${PROJECT_NAME}_generate_version_h COMMAND
   -P "${ovutil_SOURCE_DIR}/src/cmake/version.cmake"
 )
 
-if(CMAKE_SIZEOF_VOID_P EQUAL 8)
-  set(FFMPEG_INPUT_BITSIZE 64)
-  set(FFMPEG_INPUT_DLLEXT 64aui)
-elseif(CMAKE_SIZEOF_VOID_P EQUAL 4)
-  set(FFMPEG_INPUT_BITSIZE 32)
-  set(FFMPEG_INPUT_DLLEXT aui)
-endif()
-
-add_custom_target(extract_ffmpeg COMMAND
-  ${CMAKE_COMMAND}
-  -Dlocal_dir="${PROJECT_BINARY_DIR}"
-  -Dffmpeg="https://github.com/oov/ffmpeg-openh264-win/releases/download/rel.2022-11-11/ffmpeg-n5.1.2-7-ga6e26053c2-win${FFMPEG_INPUT_BITSIZE}-lgpl-shared-5.1.zip"
-  -Dopenh264="http://ciscobinary.openh264.org/openh264-2.3.1-win${FFMPEG_INPUT_BITSIZE}.dll.bz2"
-  -Dopenh264_license="http://www.openh264.org/BINARY_LICENSE.txt"
-  -Ddir="ffmpeg${FFMPEG_INPUT_BITSIZE}"
-  -P "${CMAKE_SOURCE_DIR}/src/cmake/extract-ffmpeg.cmake"
-)
-
 add_custom_target(copy_related_files
   COMMAND ${CMAKE_COMMAND} -E copy "${CMAKE_CURRENT_SOURCE_DIR}/../README.md" "${EXPORT_DIR}/ffmpeg_input.txt"
-  COMMAND ${CMAKE_COMMAND} -E copy_directory "${PROJECT_BINARY_DIR}/ffmpeg${FFMPEG_INPUT_BITSIZE}" "${EXPORT_DIR}/ffmpeg${FFMPEG_INPUT_BITSIZE}"
+  COMMAND ${CMAKE_COMMAND} -E copy_directory "${FFMPEG_DIR}" "${EXPORT_DIR}/ffmpeg${FFMPEG_INPUT_BITSIZE}"
 )
-add_dependencies(copy_related_files extract_ffmpeg)
 
 find_program(CLANG_FORMAT_EXE clang-format)
 file(GLOB sources "${CMAKE_CURRENT_SOURCE_DIR}/*.c" "${CMAKE_CURRENT_SOURCE_DIR}/*.h")
@@ -66,12 +47,12 @@ set_target_properties(ffmpeg_input PROPERTIES
   SUFFIX ""
   RUNTIME_OUTPUT_DIRECTORY "${EXPORT_DIR}"
 )
-add_dependencies(ffmpeg_input ${PROJECT_NAME}_format extract_ffmpeg ${PROJECT_NAME}_generate_version_h copy_related_files)
-set(AVCODEC_NAME avcodec-59)
-set(AVFORMAT_NAME avformat-59)
-set(AVUTIL_NAME avutil-57)
-set(SWSCALE_NAME swscale-6)
-set(SWRESAMPLE_NAME swresample-4)
+add_dependencies(ffmpeg_input ${PROJECT_NAME}_format ${PROJECT_NAME}_generate_version_h copy_related_files)
+set(AVCODEC_NAME avcodec-${AVCODEC_VERSION})
+set(AVFORMAT_NAME avformat-${AVFORMAT_VERSION})
+set(AVUTIL_NAME avutil-${AVUTIL_VERSION})
+set(SWSCALE_NAME swscale-${SWSCALE_VERSION})
+set(SWRESAMPLE_NAME swresample-${SWRESAMPLE_VERSION})
 target_link_libraries(ffmpeg_input PRIVATE
   ${AVCODEC_NAME} -Wl,-delayload,${AVCODEC_NAME}.dll
   ${AVFORMAT_NAME} -Wl,-delayload,${AVFORMAT_NAME}.dll
@@ -79,16 +60,7 @@ target_link_libraries(ffmpeg_input PRIVATE
   ${SWSCALE_NAME} -Wl,-delayload,${SWSCALE_NAME}.dll
   ${SWRESAMPLE_NAME} -Wl,-delayload,${SWRESAMPLE_NAME}.dll
 )
-target_compile_definitions(ffmpeg_input PRIVATE
-  "AVCODEC_DLL=L\"${AVCODEC_NAME}.dll\""
-  "AVFORMAT_DLL=L\"${AVFORMAT_NAME}.dll\""
-  "AVUTIL_DLL=L\"${AVUTIL_NAME}.dll\""
-  "SWSCALE_DLL=L\"${SWSCALE_NAME}.dll\""
-  "SWRESAMPLE_DLL=L\"${SWRESAMPLE_NAME}.dll\""
-)
-
 add_executable(ffmpeg_test ffmpeg_test.c)
-add_dependencies(ffmpeg_test ${PROJECT_NAME}_format extract_ffmpeg)
 target_link_libraries(ffmpeg_test PRIVATE ${AVCODEC_NAME} ${AVFORMAT_NAME} ${AVUTIL_NAME})
 list(APPEND targets ffmpeg_test)
 add_executable(ipc_test file.c ipcclient.c ipcserver.c ipc_test.c)
@@ -100,10 +72,10 @@ foreach(target ${targets})
   endif()
   target_include_directories(${target} PRIVATE
     "${CMAKE_CURRENT_BINARY_DIR}" # for version.h
-    "${CMAKE_CURRENT_BINARY_DIR}/ffmpeg${FFMPEG_INPUT_BITSIZE}/include"
+    "${FFMPEG_DIR}/include"
   )
   target_link_directories(${target} PRIVATE
-    "${CMAKE_CURRENT_BINARY_DIR}/ffmpeg${FFMPEG_INPUT_BITSIZE}/bin"
+    "${FFMPEG_DIR}/bin"
   )
   target_compile_definitions(${target} PRIVATE
     $<$<BOOL:${WIN32}>:_WIN32_WINNT=0x0600>

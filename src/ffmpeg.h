@@ -20,13 +20,20 @@
 
 #include <libavcodec/avcodec.h>
 #include <libavcodec/bsf.h>
+#include <libavcodec/version.h>
+
 #include <libavformat/avformat.h>
+#include <libavformat/version.h>
 
 #include <libavutil/opt.h>
 #include <libavutil/pixfmt.h>
+#include <libavutil/version.h>
 
 #include <libswresample/swresample.h>
+#include <libswresample/version.h>
+
 #include <libswscale/swscale.h>
+#include <libswscale/version.h>
 
 #ifdef __GNUC__
 #  pragma GCC diagnostic pop

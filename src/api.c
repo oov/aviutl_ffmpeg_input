@@ -7,26 +7,9 @@
 #include "audio.h"
 #include "config.h"
 #include "error.h"
+#include "ffmpeg.h"
 #include "version.h"
 #include "video.h"
-
-// this is a dummy definition to avoid errors during static analysis.
-// correct values are defined in CMakeLists.txt.
-#ifndef AVCODEC_DLL
-#  define AVCODEC_DLL L"avcodec-x.dll"
-#endif
-#ifndef AVFORMAT_DLL
-#  define AVFORMAT_DLL L"avformat-x.dll"
-#endif
-#ifndef AVUTIL_DLL
-#  define AVUTIL_DLL L"avutil-x.dll"
-#endif
-#ifndef SWSCALE_DLL
-#  define SWSCALE_DLL L"swscale-x.dll"
-#endif
-#ifndef SWRESAMPLE_DLL
-#  define SWRESAMPLE_DLL L"swresample-x.dll"
-#endif
 
 struct file {
   struct video *v;
@@ -221,13 +204,19 @@ cleanup:
   return (INPUT_HANDLE)fp;
 }
 
+#define TOSTR3(name, ver) L##name L##ver
+#define TOSTR2(name, ver) TOSTR3(name, #ver)
+#define TOSTR(name, ver) TOSTR2(name, ver)
 static wchar_t const *const ffmpeg_dll_names[5] = {
-    AVCODEC_DLL,
-    AVFORMAT_DLL,
-    AVUTIL_DLL,
-    SWSCALE_DLL,
-    SWRESAMPLE_DLL,
+    TOSTR("avcodec-", LIBAVCODEC_VERSION_MAJOR),
+    TOSTR("avformat-", LIBAVFORMAT_VERSION_MAJOR),
+    TOSTR("avutil-", LIBAVUTIL_VERSION_MAJOR),
+    TOSTR("swscale-", LIBSWSCALE_VERSION_MAJOR),
+    TOSTR("swresample-", LIBSWRESAMPLE_VERSION_MAJOR),
 };
+#undef TOSTR
+#undef TOSTR2
+#undef TOSTR3
 static HANDLE ffmpeg_dll_handles[5] = {0};
 
 static BOOL ffmpeg_input_init(void) {
