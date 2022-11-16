@@ -122,23 +122,20 @@ cleanup:
 
 static NODISCARD error jump(struct video *fp, int64_t frame) {
   error err = eok();
-  int64_t time_stamp = av_rescale_q(frame, av_inv_q(AV_TIME_BASE_Q), fp->stream->avg_frame_rate);
+  int64_t time_stamp = av_rescale_q(frame, av_inv_q(fp->stream->time_base), fp->stream->avg_frame_rate);
 #ifndef NDEBUG
-  int64_t pts = av_rescale_q(time_stamp, AV_TIME_BASE_Q, fp->stream->time_base);
   char s[256];
   ov_snprintf(s,
               256,
-              "req_ts:%lld pts:%lld, frame: %lld tb: %f tb2: %f fr: %f",
+              "req_pts:%lld, frame: %lld tb: %f fr: %f",
               time_stamp,
-              pts,
               frame,
-              av_q2d(av_inv_q(AV_TIME_BASE_Q)),
               av_q2d(av_inv_q(fp->stream->time_base)),
               av_q2d(fp->stream->avg_frame_rate));
   OutputDebugStringA(s);
 #endif
 
-  int r = avformat_seek_file(fp->format_context, -1, INT64_MIN, time_stamp, INT64_MAX, 0);
+  int r = avformat_seek_file(fp->format_context, fp->stream->index, INT64_MIN, time_stamp, INT64_MAX, 0);
   if (r < 0) {
     err = errffmpeg(r);
     goto cleanup;

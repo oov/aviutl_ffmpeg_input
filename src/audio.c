@@ -130,23 +130,21 @@ cleanup:
 
 static NODISCARD error jump(struct audio *fp, int64_t sample) {
   error err = eok();
-  int64_t time_stamp = av_rescale_q(sample, av_inv_q(AV_TIME_BASE_Q), av_make_q(fp->codec_context->sample_rate, 1));
+  int64_t time_stamp =
+      av_rescale_q(sample, av_inv_q(fp->stream->time_base), av_make_q(fp->codec_context->sample_rate, 1));
 #ifndef NDEBUG
-  int64_t pts = av_rescale_q(time_stamp, AV_TIME_BASE_Q, fp->stream->time_base);
   char s[256];
   ov_snprintf(s,
               256,
-              "req_ts:%lld pts:%lld sample: %lld tb: %f tb2: %f sr: %d",
+              "req_pts:%lld sample: %lld tb: %f sr: %d",
               time_stamp,
-              pts,
               sample,
-              av_q2d(av_inv_q(AV_TIME_BASE_Q)),
               av_q2d(av_inv_q(fp->stream->time_base)),
               fp->codec_context->sample_rate);
   OutputDebugStringA(s);
 #endif
 
-  int r = avformat_seek_file(fp->format_context, -1, INT64_MIN, time_stamp, INT64_MAX, 0);
+  int r = avformat_seek_file(fp->format_context, fp->stream->index, INT64_MIN, time_stamp, INT64_MAX, 0);
   if (r < 0) {
     err = errffmpeg(r);
     goto cleanup;
