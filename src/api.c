@@ -108,7 +108,7 @@ static INPUT_HANDLE ffmpeg_input_open(char *filepath) {
     goto cleanup;
   }
   if (config_get_need_postfix(config) && !has_postfix(filepath)) {
-    // skip
+    err = emsg(err_type_generic, err_abort, &native_unmanaged_const(NSTR("filename does not contain \"-ffmpeg\".")));
     goto cleanup;
   }
   err = from_mbcs(&str_unmanaged_const(filepath), &ws);

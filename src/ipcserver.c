@@ -92,6 +92,26 @@ static bool ipcserver_is_closing(struct ipcserver *const serv) {
   return atomic_load_explicit(&serv->closing, memory_order_relaxed) != 0;
 }
 
+NODISCARD static error create_error_reply(struct ipcserver_context *const ctx, error e) {
+  error err = ipcserver_context_grow_buffer(ctx, (uint32_t)(4 + 4 + 8 + 8 + e->msg.len * sizeof(NATIVE_CHAR)));
+  if (efailed(err)) {
+    err = ethru(err);
+    goto cleanup;
+  }
+  uint32_t *b32 = ctx->buffer;
+  b32[0] = 0;
+  b32[1] = (uint32_t)e->type;
+  int64_t *b64 = ctx->buffer;
+  b64[1] = (int64_t)e->code;
+  b64[2] = (int64_t)e->msg.len;
+  wchar_t *buf = ctx->buffer;
+  buf += 12;
+  memcpy(buf, e->msg.ptr, e->msg.len * sizeof(NATIVE_CHAR));
+cleanup:
+  efree(&e);
+  return err;
+}
+
 NODISCARD static int client_worker(void *userdata) {
   struct client *const cli = userdata;
   HANDLE named_pipe = cli->named_pipe;
@@ -196,15 +216,17 @@ NODISCARD static int client_worker(void *userdata) {
     // send response
     {
       if (efailed(ictx->err)) {
-        ereport(ictx->err);
-        ictx->err = eok();
-        // reply error
-        uint32_t t = 0;
-        err = ipccommon_write(named_pipe, &t, sizeof(t));
+        err = create_error_reply(&ictx->public_ctx, ictx->err);
         if (efailed(err)) {
           err = ethru(err);
           goto cleanup;
         }
+        err = ipccommon_write(named_pipe, ictx->public_ctx.buffer, ictx->public_ctx.buffer_size);
+        if (efailed(err)) {
+          err = ethru(err);
+          goto cleanup;
+        }
+        ictx->err = eok();
         continue;
       }
       err = ipccommon_write(named_pipe, &ictx->public_ctx.buffer_size, sizeof(ictx->public_ctx.buffer_size));

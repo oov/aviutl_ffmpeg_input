@@ -164,8 +164,33 @@ NODISCARD error ipcclient_call(struct ipcclient *const c,
     goto cleanup;
   }
   if (size == 0) {
-    resp->size = 0;
-    resp->ptr = NULL;
+    // receive error
+    char buf[20];
+    err = ipccommon_read(c->pipe, buf, 20);
+    if (efailed(err)) {
+      err = ethru(err);
+      goto cleanup;
+    }
+    int const typ = (int)*(uint32_t *)(void *)buf;
+    int const code = (int)*(int64_t *)(void *)(buf + 4);
+    size_t const len = (size_t) * (int64_t *)(void *)(buf + 12);
+    struct NATIVE_STR msg = {0};
+    if (len) {
+      err = sgrow(&msg, len + 1);
+      if (efailed(err)) {
+        err = ethru(err);
+        goto cleanup;
+      }
+      err = ipccommon_read(c->pipe, msg.ptr, len * sizeof(NATIVE_CHAR));
+      if (efailed(err)) {
+        ereport(sfree(&msg));
+        err = ethru(err);
+        goto cleanup;
+      }
+      msg.ptr[len] = L'\0';
+      msg.len = len;
+    }
+    err = emsg(typ, code, len ? &msg : NULL);
     goto cleanup;
   }
   err = ipcclient_grow_buffer(c, size, NULL);

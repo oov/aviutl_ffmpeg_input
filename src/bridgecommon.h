@@ -49,7 +49,7 @@ struct PACKED bridge_event_close_request {
 };
 
 struct PACKED bridge_event_close_response {
-  int32_t success;
+  int32_t dummy;
 };
 
 struct PACKED bridge_event_get_info_request {
@@ -57,7 +57,6 @@ struct PACKED bridge_event_get_info_request {
 };
 
 struct PACKED bridge_event_get_info_response {
-  int32_t success;
   int32_t flag;
   int32_t rate;
   int32_t scale;
@@ -84,7 +83,7 @@ struct PACKED bridge_event_config_request {
 };
 
 struct PACKED bridge_event_config_response {
-  int32_t success;
+  int32_t dummy;
 };
 
 #ifdef __GNUC__

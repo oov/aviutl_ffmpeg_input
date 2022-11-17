@@ -59,6 +59,11 @@ static void ipc_handler_open(struct ipcserver_context *const ctx) {
         err_type_generic, err_invalid_arugment, &native_unmanaged_const(NSTR("open request packet size too small")));
     goto cleanup;
   }
+  if (!g_ipt->func_open) {
+    err =
+        emsg(err_type_generic, err_not_implemented_yet, &native_unmanaged_const(NSTR("func_open is not implemented")));
+    goto cleanup;
+  }
   struct bridge_event_open_request *const req = ctx->buffer;
   if ((size_t)ctx->buffer_size < sizeof(struct bridge_event_open_request) + (size_t)req->filepath_size) {
     err = errg(err_invalid_arugment);
@@ -71,19 +76,21 @@ static void ipc_handler_open(struct ipcserver_context *const ctx) {
     goto cleanup;
   }
   ih = g_ipt->func_open(filepath.ptr);
-  if (ih) {
-    if (g_ipt->func_info_get(ih, &ii)) {
-      err = mem(&h, 1, sizeof(struct handle));
-      if (efailed(err)) {
-        err = ethru(err);
-        goto cleanup;
-      }
-      *h = (struct handle){
-          .ih = ih,
-          .frame_size = (size_t)(ii.format->biWidth * ii.format->biBitCount / 8 * longabs(ii.format->biHeight)),
-          .sample_size = (size_t)(ii.audio_format->nChannels * ii.audio_format->wBitsPerSample / 8),
-      };
+  if (!ih) {
+    err = emsg(err_type_generic, err_fail, &native_unmanaged_const(NSTR("func_open failed")));
+    goto cleanup;
+  }
+  if (g_ipt->func_info_get(ih, &ii)) {
+    err = mem(&h, 1, sizeof(struct handle));
+    if (efailed(err)) {
+      err = ethru(err);
+      goto cleanup;
     }
+    *h = (struct handle){
+        .ih = ih,
+        .frame_size = (size_t)(ii.format->biWidth * ii.format->biBitCount / 8 * longabs(ii.format->biHeight)),
+        .sample_size = (size_t)(ii.audio_format->nChannels * ii.audio_format->wBitsPerSample / 8),
+    };
   }
   err = ctx->grow_buffer(ctx, sizeof(struct bridge_event_open_response));
   if (efailed(err)) {
@@ -114,15 +121,21 @@ static void ipc_handler_close(struct ipcserver_context *const ctx) {
                &native_unmanaged_const(NSTR("close request packet size is incorrect")));
     goto cleanup;
   }
+  if (!g_ipt->func_close) {
+    err =
+        emsg(err_type_generic, err_not_implemented_yet, &native_unmanaged_const(NSTR("func_close is not implemented")));
+    goto cleanup;
+  }
   struct bridge_event_close_request const *const req = ctx->buffer;
   struct handle *h = (void *)req->id;
-  BOOL const r = g_ipt->func_close(h->ih);
-  if (r) {
-    err = mem_free(&h);
-    if (efailed(err)) {
-      err = ethru(err);
-      goto cleanup;
-    }
+  if (!g_ipt->func_close(h->ih)) {
+    err = emsg(err_type_generic, err_fail, &native_unmanaged_const(NSTR("func_close failed")));
+    goto cleanup;
+  }
+  err = mem_free(&h);
+  if (efailed(err)) {
+    err = ethru(err);
+    goto cleanup;
   }
   err = ctx->grow_buffer(ctx, sizeof(struct bridge_event_close_response));
   if (efailed(err)) {
@@ -130,9 +143,7 @@ static void ipc_handler_close(struct ipcserver_context *const ctx) {
     goto cleanup;
   }
   struct bridge_event_close_response *resp = ctx->buffer;
-  *resp = (struct bridge_event_close_response){
-      .success = r != FALSE ? 1 : 0,
-  };
+  *resp = (struct bridge_event_close_response){0};
 cleanup:
   ctx->finish(ctx, err);
 }
@@ -145,10 +156,18 @@ static void ipc_handler_get_info(struct ipcserver_context *const ctx) {
                &native_unmanaged_const(NSTR("get_info request packet size is incorrect")));
     goto cleanup;
   }
+  if (!g_ipt->func_info_get) {
+    err = emsg(
+        err_type_generic, err_not_implemented_yet, &native_unmanaged_const(NSTR("func_info_get is not implemented")));
+    goto cleanup;
+  }
   struct bridge_event_get_info_request const *const req = ctx->buffer;
   struct handle *h = (void *)req->id;
   INPUT_INFO ii = {0};
-  BOOL const r = g_ipt->func_info_get(h->ih, &ii);
+  if (!g_ipt->func_info_get(h->ih, &ii)) {
+    err = emsg(err_type_generic, err_not_implemented_yet, &native_unmanaged_const(NSTR("func_info_get failed")));
+    goto cleanup;
+  }
   err = ctx->grow_buffer(
       ctx, (uint32_t)(sizeof(struct bridge_event_get_info_response) + (size_t)(ii.format_size + ii.audio_format_size)));
   if (efailed(err)) {
@@ -157,7 +176,6 @@ static void ipc_handler_get_info(struct ipcserver_context *const ctx) {
   }
   struct bridge_event_get_info_response *resp = ctx->buffer;
   *resp = (struct bridge_event_get_info_response){
-      .success = r != FALSE ? 1 : 0,
       .flag = (int32_t)ii.flag,
       .rate = (int32_t)ii.rate,
       .scale = (int32_t)ii.scale,
@@ -185,6 +203,21 @@ static void ipc_handler_read(struct ipcserver_context *const ctx) {
     goto cleanup;
   }
   struct bridge_event_read_request const *const req = ctx->buffer;
+  if (req->length == 0) {
+    if (!g_ipt->func_read_video) {
+      err = emsg(err_type_generic,
+                 err_not_implemented_yet,
+                 &native_unmanaged_const(NSTR("func_read_video is not implemented")));
+      goto cleanup;
+    }
+  } else {
+    if (!g_ipt->func_read_audio) {
+      err = emsg(err_type_generic,
+                 err_not_implemented_yet,
+                 &native_unmanaged_const(NSTR("func_read_audio is not implemented")));
+      goto cleanup;
+    }
+  }
   struct handle *h = (void *)req->id;
   size_t const bytes = req->length == 0 ? h->frame_size : (size_t)(req->length) * h->sample_size;
   wchar_t fmo_name[16] = {0};
@@ -239,17 +272,23 @@ static void ipc_handler_config(struct ipcserver_context *const ctx) {
                &native_unmanaged_const(NSTR("config request packet size is incorrect")));
     goto cleanup;
   }
+  if (!g_ipt->func_config) {
+    err = emsg(
+        err_type_generic, err_not_implemented_yet, &native_unmanaged_const(NSTR("func_config is not implemented")));
+    goto cleanup;
+  }
   struct bridge_event_config_request const *const req = ctx->buffer;
-  BOOL const r = g_ipt->func_config((HWND)req->window, get_hinstance());
+  if (!g_ipt->func_config((HWND)req->window, get_hinstance())) {
+    err = emsg(err_type_generic, err_fail, &native_unmanaged_const(NSTR("func_config failed")));
+    goto cleanup;
+  }
   err = ctx->grow_buffer(ctx, (uint32_t)(sizeof(struct bridge_event_config_response)));
   if (efailed(err)) {
     err = ethru(err);
     goto cleanup;
   }
   struct bridge_event_config_response *resp = ctx->buffer;
-  *resp = (struct bridge_event_config_response){
-      .success = r != FALSE ? 1 : 0,
-  };
+  *resp = (struct bridge_event_config_response){0};
 cleanup:
   ctx->finish(ctx, err);
 }

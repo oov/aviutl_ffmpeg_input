@@ -58,7 +58,6 @@ static int config_thread(void *arg) {
   mtx_lock(&g_handles_mtx);
   error err = eok();
   HWND *disabled_windows = NULL;
-  struct bridge_event_config_response *resp = NULL;
   if (!g_ipcc) {
     goto cleanup;
   }
@@ -84,17 +83,11 @@ static int config_thread(void *arg) {
     err = ethru(err);
     goto cleanup;
   }
-  if (!r.ptr) {
-    err = emsg(err_type_generic, err_fail, &native_unmanaged_const(NSTR("config failed on remote")));
-    goto cleanup;
-  }
   if (r.size != sizeof(struct bridge_event_config_response)) {
     err = errg(err_unexpected);
     goto cleanup;
   }
-  char *ptr = r.ptr;
-  resp = (void *)ptr;
-  ctx->ret = resp->success ? TRUE : FALSE;
+  ctx->ret = TRUE;
 cleanup:
   restore_disabled_family_windows(disabled_windows);
   mtx_unlock(&g_handles_mtx);
@@ -185,10 +178,6 @@ static BOOL ffmpeg_input_info_get(INPUT_HANDLE ih, INPUT_INFO *iip) {
     err = ethru(err);
     goto cleanup;
   }
-  if (!r.ptr) {
-    err = emsg(err_type_generic, err_fail, &native_unmanaged_const(NSTR("get_info failed on remote")));
-    goto cleanup;
-  }
   if (r.size < sizeof(struct bridge_event_get_info_response)) {
     err = errg(err_unexpected);
     goto cleanup;
@@ -232,7 +221,7 @@ cleanup:
     ereport(err);
   }
   mtx_unlock(&g_handles_mtx);
-  return resp && resp->success ? TRUE : FALSE;
+  return resp ? TRUE : FALSE;
 }
 
 static NODISCARD error call_read(INPUT_HANDLE ih, int start, int length, void *buf, int *written) {
@@ -258,10 +247,6 @@ static NODISCARD error call_read(INPUT_HANDLE ih, int start, int length, void *b
                        &r);
   if (efailed(err)) {
     err = ethru(err);
-    goto cleanup;
-  }
-  if (!r.ptr) {
-    err = emsg(err_type_generic, err_fail, &native_unmanaged_const(NSTR("read failed on remote")));
     goto cleanup;
   }
   if (r.size != sizeof(struct bridge_event_read_response)) {
@@ -341,12 +326,11 @@ cleanup:
   return written;
 }
 
-static NODISCARD error call_close(struct ipcclient *const ipcc, uint64_t const id, bool *const success) {
-  if (!ipcc || !id || !success) {
+static NODISCARD error call_close(struct ipcclient *const ipcc, uint64_t const id) {
+  if (!ipcc || !id) {
     return errg(err_invalid_arugment);
   }
   error err = eok();
-  struct bridge_event_close_response *resp = NULL;
   struct ipcclient_response r = {0};
   err = ipcclient_call(ipcc,
                        &(struct ipcclient_request){
@@ -362,16 +346,10 @@ static NODISCARD error call_close(struct ipcclient *const ipcc, uint64_t const i
     err = ethru(err);
     goto cleanup;
   }
-  if (!r.ptr) {
-    err = emsg(err_type_generic, err_fail, &native_unmanaged_const(NSTR("close failed on remote")));
-    goto cleanup;
-  }
   if (r.size != sizeof(struct bridge_event_close_response)) {
     err = errg(err_unexpected);
     goto cleanup;
   }
-  resp = r.ptr;
-  *success = resp->success;
 cleanup:
   return err;
 }
@@ -382,9 +360,8 @@ static BOOL ffmpeg_input_close(INPUT_HANDLE ih) {
   }
   mtx_lock(&g_handles_mtx);
   error err = eok();
-  bool success = false;
   struct handle *h = (void *)ih;
-  err = call_close(g_ipcc, h->id, &success);
+  err = call_close(g_ipcc, h->id);
   if (efailed(err)) {
     err = ethru(err);
     goto cleanup;
@@ -397,11 +374,12 @@ static BOOL ffmpeg_input_close(INPUT_HANDLE ih) {
                    NULL));
   ereport(mem_free(&h));
 cleanup:
+  mtx_unlock(&g_handles_mtx);
   if (efailed(err)) {
     ereport(err);
+    return FALSE;
   }
-  mtx_unlock(&g_handles_mtx);
-  return success ? TRUE : FALSE;
+  return TRUE;
 }
 
 static NODISCARD error call_open(struct ipcclient *const ipcc, char const *const filepath, struct handle *h) {
@@ -432,10 +410,6 @@ static NODISCARD error call_open(struct ipcclient *const ipcc, char const *const
                        &r);
   if (efailed(err)) {
     err = ethru(err);
-    goto cleanup;
-  }
-  if (!r.ptr) {
-    err = emsg(err_type_generic, err_fail, &native_unmanaged_const(NSTR("open failed on remote")));
     goto cleanup;
   }
   if (r.size != sizeof(struct bridge_event_open_response)) {
@@ -491,8 +465,7 @@ cleanup:
       ereport(mem_free(&h));
     }
     if (tmp.id) {
-      bool success = false;
-      ereport(call_close(g_ipcc, tmp.id, &success));
+      ereport(call_close(g_ipcc, tmp.id));
     }
     if (tmp.filepath.ptr) {
       ereport(sfree(&tmp.filepath));
