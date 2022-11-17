@@ -162,7 +162,7 @@ NODISCARD error process_destroy(struct process **const pp) {
   if (WaitForSingleObject(p->process, 5000) == WAIT_TIMEOUT) {
     TerminateProcess(p->process, 1);
   }
-  thrd_join(p->thread, NULL);
+  thrd_detach(p->thread);
 
   CloseHandle(p->process);
   CloseHandle(p->event);
