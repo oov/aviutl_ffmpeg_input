@@ -1,6 +1,6 @@
-#include "file.h"
+#include "ipccommon.h"
 
-NODISCARD error read(HANDLE h, void *const buf, size_t sz) {
+NODISCARD error ipccommon_read(HANDLE h, void *const buf, size_t sz) {
   char *b = buf;
   for (DWORD read = 0; sz > 0; b += (size_t)read, sz -= (size_t)read) {
     if (!ReadFile(h, b, (DWORD)sz, &read, NULL)) {
@@ -10,7 +10,7 @@ NODISCARD error read(HANDLE h, void *const buf, size_t sz) {
   return eok();
 }
 
-NODISCARD error write(HANDLE h, void const *const buf, size_t sz) {
+NODISCARD error ipccommon_write(HANDLE h, void const *const buf, size_t sz) {
   char const *b = buf;
   for (DWORD written = 0; sz > 0; b += (size_t)written, sz -= (size_t)written) {
     if (!WriteFile(h, b, (DWORD)sz, &written, NULL)) {
@@ -20,7 +20,7 @@ NODISCARD error write(HANDLE h, void const *const buf, size_t sz) {
   return eok();
 }
 
-NODISCARD error flush(HANDLE h) {
+NODISCARD error ipccommon_flush(HANDLE h) {
   if (!FlushFileBuffers(h)) {
     return errhr(HRESULT_FROM_WIN32(GetLastError()));
   }

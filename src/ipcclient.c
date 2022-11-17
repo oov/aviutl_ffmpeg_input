@@ -5,7 +5,7 @@
 
 #include "ovutil/win32.h"
 
-#include "file.h"
+#include "ipccommon.h"
 
 struct ipcclient {
   HANDLE pipe;
@@ -27,12 +27,12 @@ connect(wchar_t const *const name, uint32_t const signature, uint32_t const prot
   // handshake
   {
     uint32_t t[2] = {signature, protocol_version};
-    err = write(h, t, sizeof(t));
+    err = ipccommon_write(h, t, sizeof(t));
     if (efailed(err)) {
       err = ethru(err);
       goto cleanup;
     }
-    err = read(h, t, sizeof(protocol_version));
+    err = ipccommon_read(h, t, sizeof(protocol_version));
     if (efailed(err)) {
       err = ethru(err);
       goto cleanup;
@@ -147,18 +147,18 @@ NODISCARD error ipcclient_call(struct ipcclient *const c,
   if (!c || !req || !req->event_id || !req->ptr || !req->size || !resp) {
     return errg(err_invalid_arugment);
   }
-  error err = write(c->pipe, (uint32_t[2]){req->event_id, req->size}, sizeof(uint32_t[2]));
+  error err = ipccommon_write(c->pipe, (uint32_t[2]){req->event_id, req->size}, sizeof(uint32_t[2]));
   if (efailed(err)) {
     err = ethru(err);
     goto cleanup;
   }
-  err = write(c->pipe, req->ptr, req->size);
+  err = ipccommon_write(c->pipe, req->ptr, req->size);
   if (efailed(err)) {
     err = ethru(err);
     goto cleanup;
   }
   uint32_t size = 0;
-  err = read(c->pipe, &size, sizeof(size));
+  err = ipccommon_read(c->pipe, &size, sizeof(size));
   if (efailed(err)) {
     err = ethru(err);
     goto cleanup;
@@ -173,7 +173,7 @@ NODISCARD error ipcclient_call(struct ipcclient *const c,
     err = ethru(err);
     goto cleanup;
   }
-  err = read(c->pipe, c->buffer, size);
+  err = ipccommon_read(c->pipe, c->buffer, size);
   if (efailed(err)) {
     err = ethru(err);
     goto cleanup;

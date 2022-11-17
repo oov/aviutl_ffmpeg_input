@@ -33,8 +33,8 @@ add_library(ffmpeg_input SHARED
   error.c
   ffmpeg.c
   ffmpeg_input.rc
-  file.c
   ipcclient.c
+  ipccommon.c
   ipcserver.c
   main.c
   process.c
@@ -63,7 +63,7 @@ target_link_libraries(ffmpeg_input PRIVATE
 add_executable(ffmpeg_test ffmpeg_test.c)
 target_link_libraries(ffmpeg_test PRIVATE ${AVCODEC_NAME} ${AVFORMAT_NAME} ${AVUTIL_NAME})
 list(APPEND targets ffmpeg_test)
-add_executable(ipc_test file.c ipcclient.c ipcserver.c ipc_test.c)
+add_executable(ipc_test ipccommon.c ipcclient.c ipcserver.c ipc_test.c)
 list(APPEND targets ipc_test)
 
 foreach(target ${targets})

@@ -5,7 +5,7 @@
 
 #include <stdatomic.h>
 
-#include "file.h"
+#include "ipccommon.h"
 
 struct client {
   struct ipcserver *serv;
@@ -120,7 +120,7 @@ NODISCARD static int client_worker(void *userdata) {
   // handshake
   {
     uint32_t t[2] = {0};
-    err = read(named_pipe, &t, sizeof(t));
+    err = ipccommon_read(named_pipe, &t, sizeof(t));
     if (efailed(err)) {
       err = ethru(err);
       goto cleanup;
@@ -133,7 +133,7 @@ NODISCARD static int client_worker(void *userdata) {
       err = emsg(err_type_generic, err_unexpected, &native_unmanaged_const(NSTR("protocol version mismatch")));
       goto cleanup;
     }
-    err = write(named_pipe, &serv->opt.protocol_version, sizeof(serv->opt.protocol_version));
+    err = ipccommon_write(named_pipe, &serv->opt.protocol_version, sizeof(serv->opt.protocol_version));
     if (efailed(err)) {
       err = ethru(err);
       goto cleanup;
@@ -148,7 +148,7 @@ NODISCARD static int client_worker(void *userdata) {
     // receive event id
     {
       uint32_t t = 0;
-      err = read(named_pipe, &t, sizeof(t));
+      err = ipccommon_read(named_pipe, &t, sizeof(t));
       if (efailed(err)) {
         err = ethru(err);
         goto cleanup;
@@ -159,7 +159,7 @@ NODISCARD static int client_worker(void *userdata) {
     // receive request
     {
       uint32_t t = 0;
-      err = read(named_pipe, &t, sizeof(t));
+      err = ipccommon_read(named_pipe, &t, sizeof(t));
       if (efailed(err)) {
         err = ethru(err);
         goto cleanup;
@@ -169,7 +169,7 @@ NODISCARD static int client_worker(void *userdata) {
         err = ethru(err);
         goto cleanup;
       }
-      err = read(named_pipe, ictx->public_ctx.buffer, (size_t)t);
+      err = ipccommon_read(named_pipe, ictx->public_ctx.buffer, (size_t)t);
       if (efailed(err)) {
         err = ethru(err);
         goto cleanup;
@@ -200,19 +200,19 @@ NODISCARD static int client_worker(void *userdata) {
         ictx->err = eok();
         // reply error
         uint32_t t = 0;
-        err = write(named_pipe, &t, sizeof(t));
+        err = ipccommon_write(named_pipe, &t, sizeof(t));
         if (efailed(err)) {
           err = ethru(err);
           goto cleanup;
         }
         continue;
       }
-      err = write(named_pipe, &ictx->public_ctx.buffer_size, sizeof(ictx->public_ctx.buffer_size));
+      err = ipccommon_write(named_pipe, &ictx->public_ctx.buffer_size, sizeof(ictx->public_ctx.buffer_size));
       if (efailed(err)) {
         err = ethru(err);
         goto cleanup;
       }
-      err = write(named_pipe, ictx->public_ctx.buffer, ictx->public_ctx.buffer_size);
+      err = ipccommon_write(named_pipe, ictx->public_ctx.buffer, ictx->public_ctx.buffer_size);
       if (efailed(err)) {
         err = ethru(err);
         goto cleanup;
@@ -222,7 +222,7 @@ NODISCARD static int client_worker(void *userdata) {
 
 cleanup:
   if (esucceeded(err)) {
-    ereport(flush(named_pipe));
+    ereport(ipccommon_flush(named_pipe));
   }
   DisconnectNamedPipe(named_pipe);
   CloseHandle(named_pipe);
