@@ -63,9 +63,9 @@ static int64_t w32seek(void *opaque, int64_t offset, int whence) {
   return pos.QuadPart;
 }
 
-NODISCARD error ffmpeg_create_format_context(wchar_t const *const filename,
-                                             size_t const buffer_size,
-                                             AVFormatContext **const format_context) {
+static NODISCARD error create_format_context(wchar_t const *const filename,
+                                                    size_t const buffer_size,
+                                                    AVFormatContext **const format_context) {
   error err = eok();
   HANDLE h = INVALID_HANDLE_VALUE;
   AVFormatContext *ctx = NULL;
@@ -122,7 +122,7 @@ cleanup:
   return err;
 }
 
-void ffmpeg_destroy_format_context(AVFormatContext **const format_context) {
+static void destroy_format_context(AVFormatContext **const format_context) {
   if ((*format_context)->pb->opaque) {
     struct w32file *file = (*format_context)->pb->opaque;
     CloseHandle(file->h);
@@ -198,12 +198,12 @@ cleanup:
   return err;
 }
 
-NODISCARD error ffmpeg_open_preferred_codec(char const *const decoders,
-                                            AVCodec const *const codec,
-                                            AVCodecParameters const *const codec_params,
-                                            AVDictionary **const options,
-                                            AVCodec const **codec_selected,
-                                            AVCodecContext **const codec_context) {
+static NODISCARD error open_preferred_codec(char const *const decoders,
+                                                   AVCodec const *const codec,
+                                                   AVCodecParameters const *const codec_params,
+                                                   AVDictionary **const options,
+                                                   AVCodec const **codec_selected,
+                                                   AVCodecContext **const codec_context) {
   if (!codec || !codec_params || !codec_context || *codec_context) {
     return errg(err_invalid_arugment);
   }
@@ -235,5 +235,125 @@ NODISCARD error ffmpeg_open_preferred_codec(char const *const decoders,
     *codec_selected = codec;
   }
 cleanup:
+  return err;
+}
+
+void ffmpeg_close(struct ffmpeg_stream *const fs) {
+  if (fs->packet) {
+    av_packet_free(&fs->packet);
+  }
+  if (fs->frame) {
+    av_frame_free(&fs->frame);
+  }
+  if (fs->cctx) {
+    avcodec_free_context(&fs->cctx);
+  }
+  if (fs->codec) {
+    fs->codec = NULL;
+  }
+  if (fs->stream) {
+    fs->stream = NULL;
+  }
+  if (fs->fctx) {
+    destroy_format_context(&fs->fctx);
+  }
+}
+
+NODISCARD error ffmpeg_open(struct ffmpeg_stream *const fs,
+                            wchar_t const *const filepath,
+                            enum AVMediaType const media_type,
+                            char const *const preferred_decoders) {
+  if (!filepath) {
+    return errg(err_invalid_arugment);
+  }
+  AVFormatContext *fctx = NULL;
+  AVStream *stream = NULL;
+  AVCodec const *codec = NULL;
+  AVCodecContext *cctx = NULL;
+  AVFrame *frame = NULL;
+  AVPacket *packet = NULL;
+  error err = create_format_context(filepath, 8126, &fctx);
+  if (efailed(err)) {
+    err = ethru(err);
+    goto cleanup;
+  }
+  int r = avformat_open_input(&fctx, "", NULL, NULL);
+  if (r < 0) {
+    err = errffmpeg(r);
+    goto cleanup;
+  }
+  r = avformat_find_stream_info(fctx, NULL);
+  if (r < 0) {
+    err = errffmpeg(r);
+    goto cleanup;
+  }
+
+  for (unsigned int i = 0; !stream && i < fctx->nb_streams; ++i) {
+    if (fctx->streams[i]->codecpar->codec_type == media_type) {
+      stream = fctx->streams[i];
+      break;
+    }
+  }
+  if (!stream) {
+    err = emsg(err_type_generic, err_fail, &native_unmanaged_const(NSTR("stream not found")));
+    goto cleanup;
+  }
+  AVCodec const *const orig_codec = avcodec_find_decoder(stream->codecpar->codec_id);
+  if (!orig_codec) {
+    err = emsg(err_type_generic, err_fail, &native_unmanaged_const(NSTR("decoder not found")));
+    goto cleanup;
+  }
+  err = open_preferred_codec(preferred_decoders, orig_codec, stream->codecpar, NULL, &codec, &cctx);
+  if (efailed(err)) {
+    err = ethru(err);
+    goto cleanup;
+  }
+
+  // workaround for h264_qsv
+  if (media_type == AVMEDIA_TYPE_VIDEO && strcmp(codec->name, "h264_qsv") == 0 && cctx->pix_fmt == 0) {
+    // It seems that the correct format is not set, so set it manually.
+    cctx->pix_fmt = AV_PIX_FMT_NV12;
+  }
+
+  frame = av_frame_alloc();
+  if (!frame) {
+    err = emsg(err_type_generic, err_fail, &native_unmanaged_const(NSTR("av_frame_alloc failed")));
+    goto cleanup;
+  }
+  packet = av_packet_alloc();
+  if (!packet) {
+    err = emsg(err_type_generic, err_fail, &native_unmanaged_const(NSTR("av_packet_alloc failed")));
+    goto cleanup;
+  }
+
+  *fs = (struct ffmpeg_stream){
+      .fctx = fctx,
+      .stream = stream,
+      .codec = codec,
+      .cctx = cctx,
+      .frame = frame,
+      .packet = packet,
+  };
+cleanup:
+  if (efailed(err)) {
+    if (packet) {
+      av_packet_free(&packet);
+    }
+    if (frame) {
+      av_frame_free(&frame);
+    }
+    if (cctx) {
+      avcodec_free_context(&cctx);
+    }
+    if (codec) {
+      codec = NULL;
+    }
+    if (stream) {
+      stream = NULL;
+    }
+    if (fctx) {
+      destroy_format_context(&fctx);
+    }
+  }
   return err;
 }

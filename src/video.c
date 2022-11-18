@@ -7,17 +7,10 @@
 
 #include "ffmpeg.h"
 
-static bool is_output_yuy2 = true;
+static bool const is_output_yuy2 = true;
 
 struct video {
-  AVFormatContext *format_context;
-
-  AVStream *stream;
-  AVCodec const *codec;
-  AVCodecContext *codec_context;
-  AVFrame *frame;
-  AVPacket *packet;
-
+  struct ffmpeg_stream ffmpeg;
   struct SwsContext *sws_context;
 
   int64_t current_frame;
@@ -25,34 +18,35 @@ struct video {
 };
 
 static inline void get_info(struct video const *const v, struct info_video *const vi) {
-  vi->width = v->codec_context->width;
-  vi->height = v->codec_context->height;
+  vi->width = v->ffmpeg.cctx->width;
+  vi->height = v->ffmpeg.cctx->height;
   vi->bit_depth = v->yuy2 ? 16 : 24;
   vi->is_rgb = !v->yuy2;
-  vi->frame_rate = v->stream->avg_frame_rate.num;
-  vi->frame_scale = v->stream->avg_frame_rate.den;
-  vi->frames = av_rescale_q(v->format_context->duration, v->stream->avg_frame_rate, av_inv_q(AV_TIME_BASE_Q));
+  vi->frame_rate = v->ffmpeg.stream->avg_frame_rate.num;
+  vi->frame_scale = v->ffmpeg.stream->avg_frame_rate.den;
+  vi->frames = av_rescale_q(v->ffmpeg.fctx->duration, v->ffmpeg.stream->avg_frame_rate, av_inv_q(AV_TIME_BASE_Q));
 #ifndef NDEBUG
   char s[256];
-  ov_snprintf(s, 256, "v duration: %lld, frames: %lld", v->format_context->duration, vi->frames);
+  ov_snprintf(s, 256, "v duration: %lld, frames: %lld", v->ffmpeg.fctx->duration, vi->frames);
   OutputDebugStringA(s);
 #endif
 }
 
 static inline void calc_current_frame(struct video *fp) {
-  fp->current_frame = av_rescale_q(
-      fp->frame->pts - fp->stream->start_time, fp->stream->avg_frame_rate, av_inv_q(fp->stream->time_base));
+  fp->current_frame = av_rescale_q(fp->ffmpeg.frame->pts - fp->ffmpeg.stream->start_time,
+                                   fp->ffmpeg.stream->avg_frame_rate,
+                                   av_inv_q(fp->ffmpeg.stream->time_base));
 #ifndef NDEBUG
   char s[256];
   ov_snprintf(s,
               256,
               "frame: %d key_frame: %d, pts: %d start_time: %d time_base:%f avg_frame_rate:%f",
               (int)fp->current_frame,
-              fp->frame->key_frame,
-              (int)fp->frame->pts,
-              (int)fp->stream->start_time,
-              av_q2d(fp->stream->time_base),
-              av_q2d(fp->stream->avg_frame_rate));
+              fp->ffmpeg.frame->key_frame ? 1 : 0,
+              (int)fp->ffmpeg.frame->pts,
+              (int)fp->ffmpeg.stream->start_time,
+              av_q2d(fp->ffmpeg.stream->time_base),
+              av_q2d(fp->ffmpeg.stream->avg_frame_rate));
   OutputDebugStringA(s);
 #endif
 }
@@ -67,7 +61,7 @@ static NODISCARD error grab(struct video *fp) {
   error err = eok();
   int r = 0;
 receive_frame:
-  r = avcodec_receive_frame(fp->codec_context, fp->frame);
+  r = avcodec_receive_frame(fp->ffmpeg.cctx, fp->ffmpeg.frame);
   switch (r) {
   case 0:
     goto cleanup;
@@ -80,11 +74,11 @@ receive_frame:
     goto cleanup;
   }
 read_frame:
-  av_packet_unref(fp->packet);
-  r = av_read_frame(fp->format_context, fp->packet);
+  av_packet_unref(fp->ffmpeg.packet);
+  r = av_read_frame(fp->ffmpeg.fctx, fp->ffmpeg.packet);
   if (r < 0) {
     // flush
-    r = avcodec_send_packet(fp->codec_context, NULL);
+    r = avcodec_send_packet(fp->ffmpeg.cctx, NULL);
     switch (r) {
     case 0:
     case AVERROR(EAGAIN):
@@ -97,10 +91,10 @@ read_frame:
       goto cleanup;
     }
   }
-  if (fp->packet->stream_index != fp->stream->index) {
+  if (fp->ffmpeg.packet->stream_index != fp->ffmpeg.stream->index) {
     goto read_frame;
   }
-  r = avcodec_send_packet(fp->codec_context, fp->packet);
+  r = avcodec_send_packet(fp->ffmpeg.cctx, fp->ffmpeg.packet);
   switch (r) {
   case 0:
     goto receive_frame;
@@ -113,7 +107,7 @@ read_frame:
   }
 cleanup:
   if (efailed(err)) {
-    av_packet_unref(fp->packet);
+    av_packet_unref(fp->ffmpeg.packet);
   } else {
     calc_current_frame(fp);
   }
@@ -122,7 +116,7 @@ cleanup:
 
 static NODISCARD error jump(struct video *fp, int64_t frame) {
   error err = eok();
-  int64_t time_stamp = av_rescale_q(frame, av_inv_q(fp->stream->time_base), fp->stream->avg_frame_rate);
+  int64_t time_stamp = av_rescale_q(frame, av_inv_q(fp->ffmpeg.stream->time_base), fp->ffmpeg.stream->avg_frame_rate);
 #ifndef NDEBUG
   char s[256];
   ov_snprintf(s,
@@ -130,24 +124,24 @@ static NODISCARD error jump(struct video *fp, int64_t frame) {
               "req_pts:%lld, frame: %lld tb: %f fr: %f",
               time_stamp,
               frame,
-              av_q2d(av_inv_q(fp->stream->time_base)),
-              av_q2d(fp->stream->avg_frame_rate));
+              av_q2d(av_inv_q(fp->ffmpeg.stream->time_base)),
+              av_q2d(fp->ffmpeg.stream->avg_frame_rate));
   OutputDebugStringA(s);
 #endif
 
-  int r = avformat_seek_file(fp->format_context, fp->stream->index, INT64_MIN, time_stamp, INT64_MAX, 0);
+  int r = avformat_seek_file(fp->ffmpeg.fctx, fp->ffmpeg.stream->index, INT64_MIN, time_stamp, time_stamp, 0);
   if (r < 0) {
     err = errffmpeg(r);
     goto cleanup;
   }
-  avcodec_flush_buffers(fp->codec_context);
+  avcodec_flush_buffers(fp->ffmpeg.cctx);
   for (;;) {
     err = grab(fp);
     if (efailed(err)) {
       err = ethru(err);
       goto cleanup;
     }
-    if (!fp->frame->key_frame) {
+    if (!fp->ffmpeg.frame->key_frame) {
 #ifndef NDEBUG
       OutputDebugStringA("not keyframe so skipped");
 #endif
@@ -194,7 +188,7 @@ cleanup:
 }
 
 NODISCARD error video_read(struct video *const fp, int64_t frame, void *buf, size_t *written) {
-  if (!fp || !fp->stream || !buf || !written) {
+  if (!fp || !fp->ffmpeg.stream || !buf || !written) {
     return errg(err_invalid_arugment);
   }
 
@@ -220,24 +214,24 @@ NODISCARD error video_read(struct video *const fp, int64_t frame, void *buf, siz
       goto cleanup;
     }
   }
-  int const width = fp->frame->width;
-  int const height = fp->frame->height;
+  int const width = fp->ffmpeg.frame->width;
+  int const height = fp->ffmpeg.frame->height;
   int const output_linesize = width * 3;
   if (fp->yuy2) {
     sws_scale(fp->sws_context,
-              (const uint8_t *const *)fp->frame->data,
-              fp->frame->linesize,
+              (const uint8_t *const *)fp->ffmpeg.frame->data,
+              fp->ffmpeg.frame->linesize,
               0,
-              fp->frame->height,
+              fp->ffmpeg.frame->height,
               (uint8_t *[4]){(uint8_t *)buf, NULL, NULL, NULL},
               (int[4]){width * 2, 0, 0, 0});
     *written = (size_t)(width * height * 2);
   } else {
     sws_scale(fp->sws_context,
-              (const uint8_t *const *)fp->frame->data,
-              fp->frame->linesize,
+              (const uint8_t *const *)fp->ffmpeg.frame->data,
+              fp->ffmpeg.frame->linesize,
               0,
-              fp->frame->height,
+              fp->ffmpeg.frame->height,
               (uint8_t *[4]){(uint8_t *)buf + output_linesize * (height - 1), NULL, NULL, NULL},
               (int[4]){-(output_linesize), 0, 0, 0});
     *written = (size_t)(width * height * 3);
@@ -249,7 +243,7 @@ cleanup:
 static inline struct SwsContext *create_sws_context(struct video *fp, enum video_format_scaling_algorithm scaling) {
   int pix_format = AV_PIX_FMT_BGR24;
   if (is_output_yuy2) {
-    int const f = fp->codec_context->pix_fmt;
+    int const f = fp->ffmpeg.cctx->pix_fmt;
     if (f != AV_PIX_FMT_RGB24 && f != AV_PIX_FMT_RGB32 && f != AV_PIX_FMT_RGBA && f != AV_PIX_FMT_BGR0 &&
         f != AV_PIX_FMT_BGR24 && f != AV_PIX_FMT_ARGB && f != AV_PIX_FMT_ABGR && f != AV_PIX_FMT_GBRP) {
       pix_format = AV_PIX_FMT_YUYV422;
@@ -292,11 +286,11 @@ static inline struct SwsContext *create_sws_context(struct video *fp, enum video
     sws_flags |= SWS_SPLINE;
     break;
   }
-  return sws_getContext(fp->codec_context->width,
-                        fp->codec_context->height,
-                        fp->codec_context->pix_fmt,
-                        fp->codec_context->width,
-                        fp->codec_context->height,
+  return sws_getContext(fp->ffmpeg.cctx->width,
+                        fp->ffmpeg.cctx->height,
+                        fp->ffmpeg.cctx->pix_fmt,
+                        fp->ffmpeg.cctx->width,
+                        fp->ffmpeg.cctx->height,
                         pix_format,
                         sws_flags,
                         NULL,
@@ -309,21 +303,10 @@ void video_destroy(struct video **const vpp) {
     return;
   }
   struct video *v = *vpp;
-  if (v->packet) {
-    av_packet_free(&v->packet);
-  }
-  if (v->frame) {
-    av_frame_free(&v->frame);
-  }
   if (v->sws_context) {
     sws_freeContext(v->sws_context);
   }
-  if (v->codec_context) {
-    avcodec_free_context(&v->codec_context);
-  }
-  if (v->format_context) {
-    ffmpeg_destroy_format_context(&v->format_context);
-  }
+  ffmpeg_close(&v->ffmpeg);
   ereport(mem_free(vpp));
 }
 
@@ -340,72 +323,21 @@ NODISCARD error video_create(struct video **const vpp,
     return NULL;
   }
   *fp = (struct video){0};
-  err = ffmpeg_create_format_context(opt->filepath, 8126, &fp->format_context);
+  err = ffmpeg_open(&fp->ffmpeg, opt->filepath, AVMEDIA_TYPE_VIDEO, opt->preferred_decoders);
   if (efailed(err)) {
     err = ethru(err);
     goto cleanup;
   }
-  int r = avformat_open_input(&fp->format_context, "", NULL, NULL);
-  if (r < 0) {
-    err = errffmpeg(r);
-    goto cleanup;
-  }
-  r = avformat_find_stream_info(fp->format_context, NULL);
-  if (r < 0) {
-    err = errffmpeg(r);
-    goto cleanup;
-  }
-
-  for (unsigned int i = 0; !fp->stream && i < fp->format_context->nb_streams; ++i) {
-    if (fp->format_context->streams[i]->codecpar->codec_type == AVMEDIA_TYPE_VIDEO) {
-      fp->stream = fp->format_context->streams[i];
-    }
-  }
-  if (!fp->stream) {
-    err = emsg(err_type_generic, err_fail, &native_unmanaged_const(NSTR("stream not found")));
-    goto cleanup;
-  }
-  AVCodec const *const codec = avcodec_find_decoder(fp->stream->codecpar->codec_id);
-  if (!codec) {
-    err = emsg(err_type_generic, err_fail, &native_unmanaged_const(NSTR("video decoder not found")));
-    goto cleanup;
-  }
-  err = ffmpeg_open_preferred_codec(
-      opt->preferred_decoders, codec, fp->stream->codecpar, NULL, &fp->codec, &fp->codec_context);
-  if (efailed(err)) {
-    err = ethru(err);
-    goto cleanup;
-  }
-
-  // workaround for h264_qsv
-  if (strcmp(fp->codec->name, "h264_qsv") == 0 && fp->codec_context->pix_fmt == 0) {
-    // It seems that the correct format is not set, so set it manually.
-    fp->codec_context->pix_fmt = AV_PIX_FMT_NV12;
-  }
-
-  fp->frame = av_frame_alloc();
-  if (!fp->frame) {
-    err = emsg(err_type_generic, err_fail, &native_unmanaged_const(NSTR("av_frame_alloc failed")));
-    goto cleanup;
-  }
-  fp->packet = av_packet_alloc();
-  if (!fp->packet) {
-    err = emsg(err_type_generic, err_fail, &native_unmanaged_const(NSTR("av_packet_alloc failed")));
-    goto cleanup;
-  }
-
   err = grab(fp);
   if (efailed(err)) {
     err = ethru(err);
     goto cleanup;
   }
-
   fp->sws_context = create_sws_context(fp, opt->scaling);
   if (!fp->sws_context) {
     err = emsg(err_type_generic, err_fail, &native_unmanaged_const(NSTR("sws_getContext failed")));
     goto cleanup;
   }
-
 cleanup:
   if (efailed(err)) {
     video_destroy(&fp);

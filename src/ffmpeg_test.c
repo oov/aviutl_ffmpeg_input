@@ -1,6 +1,15 @@
-#include "ovtest.h"
-
 #include "ffmpeg.c"
+
+#ifndef FFMPEGDIR
+#  define FFMPEGDIR L"."
+#endif
+#ifndef TESTDATADIR
+#  define TESTDATADIR L"."
+#endif
+
+static void initdll(void) { SetDllDirectoryW(FFMPEGDIR); }
+#define TEST_MY_INIT initdll()
+#include "ovtest.h"
 
 static AVCodec const dummy_codecs[] = {
     {
@@ -46,7 +55,7 @@ static void verify_find_preferred(char const *const decoders,
   TEST_MSG("expected %s got %s", expected, ret->name);
 }
 
-static void test_basic(void) {
+static void test_find_preferred(void) {
   static char const decoders[] = "h264_qsv, h265_cuvid, dummy, h264_cuvid, h264_amf";
   AVCodec const *codec = dummy_codecs;
   size_t pos = 0;
@@ -55,7 +64,8 @@ static void test_basic(void) {
   verify_find_preferred(decoders, codec, &pos, "h264_amf");
 }
 
+
 TEST_LIST = {
-    {"test_basic", test_basic},
+    {"test_find_preferred", test_find_preferred},
     {NULL, NULL},
 };

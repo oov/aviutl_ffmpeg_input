@@ -42,14 +42,17 @@
 NODISCARD error ffmpeg_create_error(int const errnum ERR_FILEPOS_PARAMS);
 #define errffmpeg(errnum) (ffmpeg_create_error((errnum)ERR_FILEPOS_VALUES))
 
-NODISCARD error ffmpeg_create_format_context(wchar_t const *const filename,
-                                             size_t const buffer_size,
-                                             AVFormatContext **const format_context);
-void ffmpeg_destroy_format_context(AVFormatContext **const format_context);
+struct ffmpeg_stream {
+  AVFormatContext *fctx;
+  AVStream *stream;
+  AVCodec const *codec;
+  AVCodecContext *cctx;
+  AVFrame *frame;
+  AVPacket *packet;
+};
 
-NODISCARD error ffmpeg_open_preferred_codec(char const *const decoders,
-                                            AVCodec const *const codec,
-                                            AVCodecParameters const *const codec_params,
-                                            AVDictionary **const options,
-                                            AVCodec const **codec_selected,
-                                            AVCodecContext **const codec_context);
+NODISCARD error ffmpeg_open(struct ffmpeg_stream *const fs,
+                            wchar_t const *const filepath,
+                            enum AVMediaType const media_type,
+                            char const *const preferred_decoders);
+void ffmpeg_close(struct ffmpeg_stream *const fs);

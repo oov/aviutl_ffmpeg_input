@@ -13,13 +13,7 @@ static int const g_sample_format = AV_SAMPLE_FMT_S16;
 static int const g_sample_size = sizeof(sample_t) * g_channels;
 
 struct audio {
-  AVFormatContext *format_context;
-
-  AVStream *stream;
-  const AVCodec *codec;
-  AVCodecContext *codec_context;
-  AVFrame *frame;
-  AVPacket *packet;
+  struct ffmpeg_stream ffmpeg;
 
   SwrContext *swr_context;
   uint8_t *swr_buf;
@@ -34,13 +28,13 @@ struct audio {
 };
 
 static inline void get_info(struct audio const *const a, struct info_audio *const ai) {
-  ai->sample_rate = a->codec_context->sample_rate;
+  ai->sample_rate = a->ffmpeg.cctx->sample_rate;
   ai->channels = g_channels;
   ai->bit_depth = sizeof(sample_t) * 8;
-  ai->samples = av_rescale_q(a->format_context->duration, AV_TIME_BASE_Q, av_make_q(1, a->codec_context->sample_rate));
+  ai->samples = av_rescale_q(a->ffmpeg.fctx->duration, AV_TIME_BASE_Q, av_make_q(1, a->ffmpeg.cctx->sample_rate));
 #ifndef NDEBUG
   char s[256];
-  ov_snprintf(s, 256, "a duration: %lld, samples: %lld", a->format_context->duration, ai->samples);
+  ov_snprintf(s, 256, "a duration: %lld, samples: %lld", a->ffmpeg.fctx->duration, ai->samples);
   OutputDebugStringA(s);
 #endif
 }
@@ -51,24 +45,25 @@ static inline void calc_current_frame(struct audio *fp) {
   // This program allows inaccurate values.
   // Instead, it avoids the accumulation of errors by not using the received pts as long as it continues to read frames.
   if (fp->jumped) {
-    fp->current_sample_pos = av_rescale_q(
-        fp->frame->pts - fp->stream->start_time, fp->stream->time_base, av_make_q(1, fp->codec_context->sample_rate));
+    fp->current_sample_pos = av_rescale_q(fp->ffmpeg.frame->pts - fp->ffmpeg.stream->start_time,
+                                          fp->ffmpeg.stream->time_base,
+                                          av_make_q(1, fp->ffmpeg.cctx->sample_rate));
     fp->jumped = false;
   } else {
-    fp->current_sample_pos += fp->frame->nb_samples;
+    fp->current_sample_pos += fp->ffmpeg.frame->nb_samples;
   }
-  fp->current_samples = fp->frame->nb_samples;
+  fp->current_samples = fp->ffmpeg.frame->nb_samples;
 #ifndef NDEBUG
   char s[256];
   ov_snprintf(s,
               256,
               "ts: %lld key_frame: %d, pts: %lld start_time: %lld time_base:%f sample_rate:%d",
               fp->current_sample_pos,
-              fp->frame->key_frame,
-              fp->frame->pts,
-              fp->stream->start_time,
-              av_q2d(fp->stream->time_base),
-              fp->codec_context->sample_rate);
+              fp->ffmpeg.frame->key_frame,
+              fp->ffmpeg.frame->pts,
+              fp->ffmpeg.stream->start_time,
+              av_q2d(fp->ffmpeg.stream->time_base),
+              fp->ffmpeg.cctx->sample_rate);
   OutputDebugStringA(s);
 #endif
 }
@@ -77,7 +72,7 @@ static NODISCARD error grab(struct audio *fp) {
   error err = eok();
   int r = 0;
 receive_frame:
-  r = avcodec_receive_frame(fp->codec_context, fp->frame);
+  r = avcodec_receive_frame(fp->ffmpeg.cctx, fp->ffmpeg.frame);
   switch (r) {
   case 0:
     goto cleanup;
@@ -90,11 +85,11 @@ receive_frame:
     goto cleanup;
   }
 read_frame:
-  av_packet_unref(fp->packet);
-  r = av_read_frame(fp->format_context, fp->packet);
+  av_packet_unref(fp->ffmpeg.packet);
+  r = av_read_frame(fp->ffmpeg.fctx, fp->ffmpeg.packet);
   if (r < 0) {
     // flush
-    r = avcodec_send_packet(fp->codec_context, NULL);
+    r = avcodec_send_packet(fp->ffmpeg.cctx, NULL);
     switch (r) {
     case 0:
     case AVERROR(EAGAIN):
@@ -107,10 +102,10 @@ read_frame:
       goto cleanup;
     }
   }
-  if (fp->packet->stream_index != fp->stream->index) {
+  if (fp->ffmpeg.packet->stream_index != fp->ffmpeg.stream->index) {
     goto read_frame;
   }
-  r = avcodec_send_packet(fp->codec_context, fp->packet);
+  r = avcodec_send_packet(fp->ffmpeg.cctx, fp->ffmpeg.packet);
   switch (r) {
   case 0:
   case AVERROR(EAGAIN): // not ready to accept avcodec_send_packet, must call avcodec_receive_frame.
@@ -121,7 +116,7 @@ read_frame:
   }
 cleanup:
   if (efailed(err)) {
-    av_packet_unref(fp->packet);
+    av_packet_unref(fp->ffmpeg.packet);
   } else {
     calc_current_frame(fp);
   }
@@ -131,7 +126,7 @@ cleanup:
 static NODISCARD error jump(struct audio *fp, int64_t sample) {
   error err = eok();
   int64_t time_stamp =
-      av_rescale_q(sample, av_inv_q(fp->stream->time_base), av_make_q(fp->codec_context->sample_rate, 1));
+      av_rescale_q(sample, av_inv_q(fp->ffmpeg.stream->time_base), av_make_q(fp->ffmpeg.cctx->sample_rate, 1));
 #ifndef NDEBUG
   char s[256];
   ov_snprintf(s,
@@ -139,17 +134,17 @@ static NODISCARD error jump(struct audio *fp, int64_t sample) {
               "req_pts:%lld sample: %lld tb: %f sr: %d",
               time_stamp,
               sample,
-              av_q2d(av_inv_q(fp->stream->time_base)),
-              fp->codec_context->sample_rate);
+              av_q2d(av_inv_q(fp->ffmpeg.stream->time_base)),
+              fp->ffmpeg.cctx->sample_rate);
   OutputDebugStringA(s);
 #endif
 
-  int r = avformat_seek_file(fp->format_context, fp->stream->index, INT64_MIN, time_stamp, INT64_MAX, 0);
+  int r = avformat_seek_file(fp->ffmpeg.fctx, fp->ffmpeg.stream->index, INT64_MIN, time_stamp, INT64_MAX, 0);
   if (r < 0) {
     err = errffmpeg(r);
     goto cleanup;
   }
-  avcodec_flush_buffers(fp->codec_context);
+  avcodec_flush_buffers(fp->ffmpeg.cctx);
   fp->jumped = true;
   for (;;) {
     err = grab(fp);
@@ -157,7 +152,7 @@ static NODISCARD error jump(struct audio *fp, int64_t sample) {
       err = ethru(err);
       goto cleanup;
     }
-    if (!fp->frame->key_frame) {
+    if (!fp->ffmpeg.frame->key_frame) {
 #ifndef NDEBUG
       OutputDebugStringA("not keyframe so skipped");
 #endif
@@ -177,7 +172,7 @@ static NODISCARD error seek(struct audio *fp, int64_t sample) {
     goto cleanup;
   }
   while (fp->current_sample_pos > sample && f != 0) {
-    f -= fp->codec_context->sample_rate;
+    f -= fp->ffmpeg.cctx->sample_rate;
     if (f < 0) {
       f = 0;
     }
@@ -192,10 +187,10 @@ static NODISCARD error seek(struct audio *fp, int64_t sample) {
       goto cleanup;
     }
   }
-  while (fp->current_sample_pos + fp->frame->nb_samples < sample) {
+  while (fp->current_sample_pos + fp->ffmpeg.frame->nb_samples < sample) {
 #ifndef NDEBUG
     char s[256];
-    ov_snprintf(s, 256, "csp: %lld / smp: %lld", fp->current_sample_pos + fp->frame->nb_samples, sample);
+    ov_snprintf(s, 256, "csp: %lld / smp: %lld", fp->current_sample_pos + fp->ffmpeg.frame->nb_samples, sample);
     OutputDebugStringA(s);
 #endif
     err = grab(fp);
@@ -251,7 +246,7 @@ readbuf:
   }
 
   // seek:
-  if (readpos < fp->current_sample_pos || readpos >= fp->current_sample_pos + fp->codec_context->sample_rate) {
+  if (readpos < fp->current_sample_pos || readpos >= fp->current_sample_pos + fp->ffmpeg.cctx->sample_rate) {
     err = seek(fp, readpos);
     if (efailed(err)) {
       err = ethru(err);
@@ -266,8 +261,11 @@ readbuf:
   }
 
 convert:
-  r = swr_convert(
-      fp->swr_context, (void *)&fp->swr_buf, fp->swr_buf_len, (void *)fp->frame->data, fp->frame->nb_samples);
+  r = swr_convert(fp->swr_context,
+                  (void *)&fp->swr_buf,
+                  fp->swr_buf_len,
+                  (void *)fp->ffmpeg.frame->data,
+                  fp->ffmpeg.frame->nb_samples);
   if (r < 0) {
     err = errffmpeg(r);
     goto cleanup;
@@ -297,24 +295,13 @@ void audio_destroy(struct audio **const app) {
     return;
   }
   struct audio *a = *app;
-  if (a->packet) {
-    av_packet_free(&a->packet);
-  }
-  if (a->frame) {
-    av_frame_free(&a->frame);
-  }
   if (a->swr_context) {
     swr_free(&a->swr_context);
   }
   if (a->swr_buf) {
     av_freep(&a->swr_buf);
   }
-  if (a->codec_context) {
-    avcodec_free_context(&a->codec_context);
-  }
-  if (a->format_context) {
-    ffmpeg_destroy_format_context(&a->format_context);
-  }
+  ffmpeg_close(&a->ffmpeg);
   ereport(mem_free(app));
 }
 
@@ -331,52 +318,9 @@ NODISCARD error audio_create(struct audio **const app,
     return NULL;
   }
   *fp = (struct audio){0};
-
-  err = ffmpeg_create_format_context(opt->filepath, 8126, &fp->format_context);
+  err = ffmpeg_open(&fp->ffmpeg, opt->filepath, AVMEDIA_TYPE_AUDIO, opt->preferred_decoders);
   if (efailed(err)) {
     err = ethru(err);
-    goto cleanup;
-  }
-  int r = avformat_open_input(&fp->format_context, "", NULL, NULL);
-  if (r < 0) {
-    err = errffmpeg(r);
-    goto cleanup;
-  }
-  r = avformat_find_stream_info(fp->format_context, NULL);
-  if (r < 0) {
-    err = errffmpeg(r);
-    goto cleanup;
-  }
-
-  for (unsigned int i = 0; !fp->stream && i < fp->format_context->nb_streams; ++i) {
-    if (fp->format_context->streams[i]->codecpar->codec_type == AVMEDIA_TYPE_AUDIO) {
-      fp->stream = fp->format_context->streams[i];
-    }
-  }
-  if (!fp->stream) {
-    err = emsg(err_type_generic, err_fail, &native_unmanaged_const(NSTR("stream not found")));
-    goto cleanup;
-  }
-  AVCodec const *const codec = avcodec_find_decoder(fp->stream->codecpar->codec_id);
-  if (!codec) {
-    err = emsg(err_type_generic, err_fail, &native_unmanaged_const(NSTR("audio decoder not found")));
-    goto cleanup;
-  }
-  err = ffmpeg_open_preferred_codec(
-      opt->preferred_decoders, codec, fp->stream->codecpar, NULL, &fp->codec, &fp->codec_context);
-  if (efailed(err)) {
-    err = ethru(err);
-    goto cleanup;
-  }
-
-  fp->frame = av_frame_alloc();
-  if (!fp->frame) {
-    err = emsg(err_type_generic, err_fail, &native_unmanaged_const(NSTR("av_frame_alloc failed")));
-    goto cleanup;
-  }
-  fp->packet = av_packet_alloc();
-  if (!fp->packet) {
-    err = emsg(err_type_generic, err_fail, &native_unmanaged_const(NSTR("av_packet_alloc failed")));
     goto cleanup;
   }
 
@@ -387,8 +331,8 @@ NODISCARD error audio_create(struct audio **const app,
     goto cleanup;
   }
 
-  fp->swr_buf_len = fp->codec_context->sample_rate * g_channels;
-  r = av_samples_alloc(&fp->swr_buf, NULL, 2, fp->swr_buf_len, AV_SAMPLE_FMT_S16, 0);
+  fp->swr_buf_len = fp->ffmpeg.cctx->sample_rate * g_channels;
+  int r = av_samples_alloc(&fp->swr_buf, NULL, 2, fp->swr_buf_len, AV_SAMPLE_FMT_S16, 0);
   if (r < 0) {
     err = errffmpeg(r);
     goto cleanup;
@@ -397,10 +341,10 @@ NODISCARD error audio_create(struct audio **const app,
   r = swr_alloc_set_opts2(&fp->swr_context,
                           &(AVChannelLayout)AV_CHANNEL_LAYOUT_STEREO,
                           g_sample_format,
-                          fp->codec_context->sample_rate,
-                          &fp->frame->ch_layout,
-                          fp->frame->format,
-                          fp->frame->sample_rate,
+                          fp->ffmpeg.cctx->sample_rate,
+                          &fp->ffmpeg.frame->ch_layout,
+                          fp->ffmpeg.frame->format,
+                          fp->ffmpeg.frame->sample_rate,
                           0,
                           NULL);
   if (r < 0) {

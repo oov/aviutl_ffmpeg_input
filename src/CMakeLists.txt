@@ -48,27 +48,23 @@ set_target_properties(ffmpeg_input PROPERTIES
   RUNTIME_OUTPUT_DIRECTORY "${EXPORT_DIR}"
 )
 add_dependencies(ffmpeg_input ${PROJECT_NAME}_format ${PROJECT_NAME}_generate_version_h copy_related_files)
+add_executable(ffmpeg_test ffmpeg_test.c)
+list(APPEND targets ffmpeg_test)
+add_executable(ipc_test ipccommon.c ipcclient.c ipcserver.c ipc_test.c)
+list(APPEND targets ipc_test)
+
 set(AVCODEC_NAME avcodec-${AVCODEC_VERSION})
 set(AVFORMAT_NAME avformat-${AVFORMAT_VERSION})
 set(AVUTIL_NAME avutil-${AVUTIL_VERSION})
 set(SWSCALE_NAME swscale-${SWSCALE_VERSION})
 set(SWRESAMPLE_NAME swresample-${SWRESAMPLE_VERSION})
-target_link_libraries(ffmpeg_input PRIVATE
-  ${AVCODEC_NAME} -Wl,-delayload,${AVCODEC_NAME}.dll
-  ${AVFORMAT_NAME} -Wl,-delayload,${AVFORMAT_NAME}.dll
-  ${AVUTIL_NAME} -Wl,-delayload,${AVUTIL_NAME}.dll
-  ${SWSCALE_NAME} -Wl,-delayload,${SWSCALE_NAME}.dll
-  ${SWRESAMPLE_NAME} -Wl,-delayload,${SWRESAMPLE_NAME}.dll
-)
-add_executable(ffmpeg_test ffmpeg_test.c)
-target_link_libraries(ffmpeg_test PRIVATE ${AVCODEC_NAME} ${AVFORMAT_NAME} ${AVUTIL_NAME})
-list(APPEND targets ffmpeg_test)
-add_executable(ipc_test ipccommon.c ipcclient.c ipcserver.c ipc_test.c)
-list(APPEND targets ipc_test)
-
 foreach(target ${targets})
   if(target MATCHES "_test$")
     add_test(NAME ${target} COMMAND ${target})
+    target_compile_definitions(${target} PRIVATE
+      FFMPEGDIR=L"${FFMPEG_DIR}/bin"
+      TESTDATADIR=L"${CMAKE_CURRENT_SOURCE_DIR}/testdata"
+    )
   endif()
   target_include_directories(${target} PRIVATE
     "${CMAKE_CURRENT_BINARY_DIR}" # for version.h
@@ -109,5 +105,10 @@ foreach(target ${targets})
   target_link_libraries(${target} PRIVATE
     ovbase
     ovutil
+    ${AVCODEC_NAME} -Wl,-delayload,${AVCODEC_NAME}.dll
+    ${AVFORMAT_NAME} -Wl,-delayload,${AVFORMAT_NAME}.dll
+    ${AVUTIL_NAME} -Wl,-delayload,${AVUTIL_NAME}.dll
+    ${SWSCALE_NAME} -Wl,-delayload,${SWSCALE_NAME}.dll
+    ${SWRESAMPLE_NAME} -Wl,-delayload,${SWRESAMPLE_NAME}.dll
   )
 endforeach(target)
