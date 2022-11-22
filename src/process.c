@@ -151,7 +151,7 @@ cleanup:
   return err;
 }
 
-NODISCARD error process_destroy(struct process **const pp) {
+NODISCARD error process_destroy(struct process **const pp, bool const join_thread) {
   if (!pp || !*pp) {
     return errg(err_unexpected);
   }
@@ -162,7 +162,11 @@ NODISCARD error process_destroy(struct process **const pp) {
   if (WaitForSingleObject(p->process, 5000) == WAIT_TIMEOUT) {
     TerminateProcess(p->process, 1);
   }
-  thrd_detach(p->thread);
+  if (join_thread) {
+    thrd_join(p->thread, NULL);
+  } else {
+    thrd_detach(p->thread);
+  }
 
   CloseHandle(p->process);
   CloseHandle(p->event);
