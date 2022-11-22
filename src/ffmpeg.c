@@ -1,5 +1,11 @@
 #include "ffmpeg.h"
 
+#define USE_FILE_MAPPING 1
+
+#if USE_FILE_MAPPING
+#  include "mapped.h"
+#endif
+
 #include "ovutil/win32.h"
 
 NODISCARD error ffmpeg_create_error(int errnum ERR_FILEPOS_PARAMS) {
@@ -21,6 +27,26 @@ failed:
   return err(err_type_errno, errnum);
 }
 
+#if USE_FILE_MAPPING
+struct mappedfile {
+  struct mapped *mp;
+  AVIOContext *ctx;
+};
+
+static int w32read(void *opaque, uint8_t *buf, int buf_size) {
+  struct mappedfile *const file = opaque;
+  int const r = mapped_read(file->mp, buf, buf_size);
+  if (r == 0) {
+    file->ctx->eof_reached = 1;
+  }
+  return r;
+}
+
+static int64_t w32seek(void *opaque, int64_t offset, int whence) {
+  struct mappedfile *const file = opaque;
+  return whence == AVSEEK_SIZE ? mapped_get_size(file->mp) : mapped_seek(file->mp, offset, whence);
+}
+#else
 struct w32file {
   HANDLE h;
   AVIOContext *ctx;
@@ -30,8 +56,7 @@ static int w32read(void *opaque, uint8_t *buf, int buf_size) {
   struct w32file *file = opaque;
   DWORD read;
   if (!ReadFile(file->h, (void *)buf, (DWORD)buf_size, &read, NULL)) {
-    errno = EIO;
-    return 0;
+    return -EIO;
   }
   if (read == 0) {
     file->ctx->eof_reached = 1;
@@ -52,35 +77,77 @@ static int64_t w32seek(void *opaque, int64_t offset, int whence) {
   case SEEK_END:
     w = FILE_END;
     break;
+  case AVSEEK_SIZE: {
+    LARGE_INTEGER sz;
+    if (!GetFileSizeEx(file->h, &sz)) {
+      return -EIO;
+    }
+    return sz.QuadPart;
+  }
   default:
-    return -1; // failed
+    return -EINVAL;
   }
   LARGE_INTEGER pos;
   if (!SetFilePointerEx(file->h, (LARGE_INTEGER){.QuadPart = offset}, &pos, w)) {
-    errno = EIO;
-    return -1;
+    return -EIO;
   }
   return pos.QuadPart;
 }
+#endif
 
 static NODISCARD error create_format_context(wchar_t const *const filename,
                                              size_t const buffer_size,
                                              AVFormatContext **const format_context) {
   error err = eok();
-  HANDLE h = INVALID_HANDLE_VALUE;
   AVFormatContext *ctx = NULL;
-  struct w32file *file = NULL;
   unsigned char *buffer = NULL;
+
+#if USE_FILE_MAPPING
+  struct mappedfile *file = NULL;
+  struct mapped *mp = NULL;
+  err = mapped_create(&mp, filename);
+  if (efailed(err)) {
+    err = ethru(err);
+    goto cleanup;
+  }
+#else
+  struct w32file *file = NULL;
+  HANDLE h = INVALID_HANDLE_VALUE;
   h = CreateFileW(filename, GENERIC_READ, FILE_SHARE_READ, NULL, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL);
   if (h == INVALID_HANDLE_VALUE) {
     err = errhr(HRESULT_FROM_WIN32(GetLastError()));
     goto cleanup;
   }
+#endif
+
   ctx = avformat_alloc_context();
   if (!ctx) {
     err = emsg(err_type_generic, err_fail, &native_unmanaged_const(NSTR("avformat_alloc_context failed")));
     goto cleanup;
   }
+
+#if USE_FILE_MAPPING
+  file = av_malloc(sizeof(struct mappedfile));
+  if (!file) {
+    err = emsg(err_type_generic, err_fail, &native_unmanaged_const(NSTR("av_malloc failed")));
+    goto cleanup;
+  }
+  *file = (struct mappedfile){
+      .mp = mp,
+  };
+  buffer = av_malloc(buffer_size);
+  if (!buffer) {
+    err = emsg(err_type_generic, err_fail, &native_unmanaged_const(NSTR("av_malloc failed")));
+    goto cleanup;
+  }
+  ctx->pb = avio_alloc_context(buffer, (int)buffer_size, 0, file, w32read, NULL, w32seek);
+  if (!ctx->pb) {
+    err = emsg(err_type_generic, err_fail, &native_unmanaged_const(NSTR("avio_alloc_context failed")));
+    goto cleanup;
+  }
+  file->ctx = ctx->pb;
+  ctx->pb->direct = 1;
+#else
   file = av_malloc(sizeof(struct w32file));
   if (!file) {
     err = emsg(err_type_generic, err_fail, &native_unmanaged_const(NSTR("av_malloc failed")));
@@ -100,6 +167,7 @@ static NODISCARD error create_format_context(wchar_t const *const filename,
     goto cleanup;
   }
   file->ctx = ctx->pb;
+#endif
   *format_context = ctx;
 cleanup:
   if (efailed(err)) {
@@ -115,17 +183,28 @@ cleanup:
       }
       avformat_free_context(ctx);
     }
+#if USE_FILE_MAPPING
+    if (mp) {
+      mapped_destroy(&mp);
+    }
+#else
     if (h != INVALID_HANDLE_VALUE) {
       CloseHandle(h);
     }
+#endif
   }
   return err;
 }
 
 static void destroy_format_context(AVFormatContext **const format_context) {
   if ((*format_context)->pb->opaque) {
+#if USE_FILE_MAPPING
+    struct mappedfile *file = (*format_context)->pb->opaque;
+    mapped_destroy(&file->mp);
+#else
     struct w32file *file = (*format_context)->pb->opaque;
     CloseHandle(file->h);
+#endif
     av_freep(&(*format_context)->pb->opaque);
   }
   avformat_close_input(format_context);

@@ -82,15 +82,17 @@ static NODISCARD error seek(struct audio *fp, int64_t sample) {
   int64_t time_stamp =
       av_rescale_q(sample, av_inv_q(fp->ffmpeg.stream->time_base), av_make_q(fp->ffmpeg.cctx->sample_rate, 1));
 #ifndef NDEBUG
-  char s[256];
-  ov_snprintf(s,
-              256,
-              "req_pts:%lld sample: %lld tb: %f sr: %d",
-              time_stamp,
-              sample,
-              av_q2d(av_inv_q(fp->ffmpeg.stream->time_base)),
-              fp->ffmpeg.cctx->sample_rate);
-  OutputDebugStringA(s);
+  {
+    char s[256];
+    ov_snprintf(s,
+                256,
+                "req_pts:%lld sample: %lld tb: %f sr: %d",
+                time_stamp,
+                sample,
+                av_q2d(av_inv_q(fp->ffmpeg.stream->time_base)),
+                fp->ffmpeg.cctx->sample_rate);
+    OutputDebugStringA(s);
+  }
 #endif
   error err = ffmpeg_seek(&fp->ffmpeg, time_stamp);
   if (efailed(err)) {

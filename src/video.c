@@ -88,7 +88,7 @@ static NODISCARD error seek(struct video *fp, int frame) {
   char s[256];
   ov_snprintf(s,
               256,
-              "req_pts:%lld, frame: %lld tb: %f fr: %f",
+              "req_pts:%lld, frame: %d tb: %f fr: %f",
               time_stamp,
               frame,
               av_q2d(av_inv_q(fp->ffmpeg.stream->time_base)),

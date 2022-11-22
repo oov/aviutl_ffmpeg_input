@@ -37,6 +37,7 @@ add_library(ffmpeg_input SHARED
   ipccommon.c
   ipcserver.c
   main.c
+  mapped.c
   process.c
   video.c
 )
@@ -48,7 +49,7 @@ set_target_properties(ffmpeg_input PROPERTIES
   RUNTIME_OUTPUT_DIRECTORY "${EXPORT_DIR}"
 )
 add_dependencies(ffmpeg_input ${PROJECT_NAME}_format ${PROJECT_NAME}_generate_version_h copy_related_files)
-add_executable(ffmpeg_test ffmpeg_test.c)
+add_executable(ffmpeg_test mapped.c ffmpeg_test.c)
 list(APPEND targets ffmpeg_test)
 add_executable(ipc_test ipccommon.c ipcclient.c ipcserver.c ipc_test.c)
 list(APPEND targets ipc_test)
