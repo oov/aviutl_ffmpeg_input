@@ -69,62 +69,16 @@ static inline void calc_current_frame(struct audio *fp) {
 }
 
 static NODISCARD error grab(struct audio *fp) {
-  error err = eok();
-  int r = 0;
-receive_frame:
-  r = avcodec_receive_frame(fp->ffmpeg.cctx, fp->ffmpeg.frame);
-  switch (r) {
-  case 0:
-    goto cleanup;
-  case AVERROR(EAGAIN):
-  case AVERROR_EOF:
-  case AVERROR_INPUT_CHANGED:
-    break;
-  default:
-    err = errffmpeg(r);
-    goto cleanup;
-  }
-read_frame:
-  av_packet_unref(fp->ffmpeg.packet);
-  r = av_read_frame(fp->ffmpeg.fctx, fp->ffmpeg.packet);
-  if (r < 0) {
-    // flush
-    r = avcodec_send_packet(fp->ffmpeg.cctx, NULL);
-    switch (r) {
-    case 0:
-    case AVERROR(EAGAIN):
-      goto receive_frame;
-    case AVERROR_EOF:
-      err = errffmpeg(r); // decoder has been flushed
-      goto cleanup;
-    default:
-      err = errffmpeg(r);
-      goto cleanup;
-    }
-  }
-  if (fp->ffmpeg.packet->stream_index != fp->ffmpeg.stream->index) {
-    goto read_frame;
-  }
-  r = avcodec_send_packet(fp->ffmpeg.cctx, fp->ffmpeg.packet);
-  switch (r) {
-  case 0:
-  case AVERROR(EAGAIN): // not ready to accept avcodec_send_packet, must call avcodec_receive_frame.
-    goto receive_frame;
-  default:
-    err = errffmpeg(r);
-    goto cleanup;
-  }
-cleanup:
+  error err = ffmpeg_grab(&fp->ffmpeg);
   if (efailed(err)) {
-    av_packet_unref(fp->ffmpeg.packet);
-  } else {
-    calc_current_frame(fp);
+    goto cleanup;
   }
+  calc_current_frame(fp);
+cleanup:
   return err;
 }
 
-static NODISCARD error jump(struct audio *fp, int64_t sample) {
-  error err = eok();
+static NODISCARD error seek(struct audio *fp, int64_t sample) {
   int64_t time_stamp =
       av_rescale_q(sample, av_inv_q(fp->ffmpeg.stream->time_base), av_make_q(fp->ffmpeg.cctx->sample_rate, 1));
 #ifndef NDEBUG
@@ -138,54 +92,16 @@ static NODISCARD error jump(struct audio *fp, int64_t sample) {
               fp->ffmpeg.cctx->sample_rate);
   OutputDebugStringA(s);
 #endif
-
-  int r = avformat_seek_file(fp->ffmpeg.fctx, fp->ffmpeg.stream->index, INT64_MIN, time_stamp, INT64_MAX, 0);
-  if (r < 0) {
-    err = errffmpeg(r);
-    goto cleanup;
-  }
-  avcodec_flush_buffers(fp->ffmpeg.cctx);
-  fp->jumped = true;
-  for (;;) {
-    err = grab(fp);
-    if (efailed(err)) {
-      err = ethru(err);
-      goto cleanup;
-    }
-    if (!fp->ffmpeg.frame->key_frame) {
-#ifndef NDEBUG
-      OutputDebugStringA("not keyframe so skipped");
-#endif
-      continue;
-    }
-    break;
-  }
-cleanup:
-  return err;
-}
-
-static NODISCARD error seek(struct audio *fp, int64_t sample) {
-  int64_t f = sample;
-  error err = jump(fp, f);
+  error err = ffmpeg_seek(&fp->ffmpeg, time_stamp);
   if (efailed(err)) {
     err = ethru(err);
     goto cleanup;
   }
-  while (fp->current_sample_pos > sample && f != 0) {
-    f -= fp->ffmpeg.cctx->sample_rate;
-    if (f < 0) {
-      f = 0;
-    }
-#ifndef NDEBUG
-    char s[256];
-    ov_snprintf(s, 256, "re-jump: %lld", f);
-    OutputDebugStringA(s);
-#endif
-    err = jump(fp, f);
-    if (efailed(err)) {
-      err = ethru(err);
-      goto cleanup;
-    }
+  fp->jumped = true;
+  err = grab(fp);
+  if (efailed(err)) {
+    err = ethru(err);
+    goto cleanup;
   }
   while (fp->current_sample_pos + fp->ffmpeg.frame->nb_samples < sample) {
 #ifndef NDEBUG

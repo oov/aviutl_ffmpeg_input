@@ -64,8 +64,8 @@ static int64_t w32seek(void *opaque, int64_t offset, int whence) {
 }
 
 static NODISCARD error create_format_context(wchar_t const *const filename,
-                                                    size_t const buffer_size,
-                                                    AVFormatContext **const format_context) {
+                                             size_t const buffer_size,
+                                             AVFormatContext **const format_context) {
   error err = eok();
   HANDLE h = INVALID_HANDLE_VALUE;
   AVFormatContext *ctx = NULL;
@@ -199,11 +199,11 @@ cleanup:
 }
 
 static NODISCARD error open_preferred_codec(char const *const decoders,
-                                                   AVCodec const *const codec,
-                                                   AVCodecParameters const *const codec_params,
-                                                   AVDictionary **const options,
-                                                   AVCodec const **codec_selected,
-                                                   AVCodecContext **const codec_context) {
+                                            AVCodec const *const codec,
+                                            AVCodecParameters const *const codec_params,
+                                            AVDictionary **const options,
+                                            AVCodec const **codec_selected,
+                                            AVCodecContext **const codec_context) {
   if (!codec || !codec_params || !codec_context || *codec_context) {
     return errg(err_invalid_arugment);
   }
@@ -355,5 +355,83 @@ cleanup:
       destroy_format_context(&fctx);
     }
   }
+  return err;
+}
+
+NODISCARD error ffmpeg_seek(struct ffmpeg_stream *const fs, int64_t const timestamp_in_stream_time_base) {
+  int const r = avformat_seek_file(
+      fs->fctx, fs->stream->index, INT64_MIN, timestamp_in_stream_time_base, timestamp_in_stream_time_base, 0);
+  if (r < 0) {
+    return errffmpeg(r);
+  }
+  avcodec_flush_buffers(fs->cctx);
+  return eok();
+}
+
+static int inline receive_frame(struct ffmpeg_stream *const fs) { return avcodec_receive_frame(fs->cctx, fs->frame); }
+
+static int inline read_packet(struct ffmpeg_stream *const fs) {
+  for (;;) {
+    av_packet_unref(fs->packet);
+    int const r = av_read_frame(fs->fctx, fs->packet);
+    if (r < 0) {
+      return r;
+    }
+    if (fs->packet->stream_index != fs->stream->index) {
+      continue;
+    }
+    return r;
+  }
+}
+
+static int inline send_packet(struct ffmpeg_stream *const fs) { return avcodec_send_packet(fs->cctx, fs->packet); }
+
+static int inline send_null_packet(struct ffmpeg_stream *const fs) { return avcodec_send_packet(fs->cctx, NULL); }
+
+NODISCARD error ffmpeg_grab(struct ffmpeg_stream *const fs) {
+  error err = eok();
+  int r = 0;
+  for (;;) {
+    r = receive_frame(fs);
+    switch (r) {
+    case 0:
+      goto cleanup;
+    case AVERROR(EAGAIN):
+    case AVERROR_EOF:
+    case AVERROR_INPUT_CHANGED:
+      break;
+    default:
+      err = errffmpeg(r);
+      goto cleanup;
+    }
+    r = read_packet(fs);
+    if (r < 0) {
+      // flush
+      r = send_null_packet(fs);
+      switch (r) {
+      case 0:
+      case AVERROR(EAGAIN):
+        continue;
+      case AVERROR_EOF:
+        err = errffmpeg(r); // decoder has been flushed
+        goto cleanup;
+      default:
+        err = errffmpeg(r);
+        goto cleanup;
+      }
+    }
+    r = send_packet(fs);
+    switch (r) {
+    case 0:
+      continue;
+    case AVERROR(EAGAIN):
+      // not ready to accept avcodec_send_packet, must call avcodec_receive_frame.
+      continue;
+    default:
+      err = errffmpeg(r);
+      goto cleanup;
+    }
+  }
+cleanup:
   return err;
 }

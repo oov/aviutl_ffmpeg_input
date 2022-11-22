@@ -51,71 +51,38 @@ static inline void calc_current_frame(struct video *fp) {
 #endif
 }
 
-static NODISCARD error grab(struct video *fp) {
-#ifndef NDEBUG
+#if 0
+static inline void calc_current_packet(struct video *fp) {
+  fp->current_frame = av_rescale_q(fp->ffmpeg.packet->pts - fp->ffmpeg.stream->start_time,
+                                   fp->ffmpeg.stream->avg_frame_rate,
+                                   av_inv_q(fp->ffmpeg.stream->time_base));
+#  ifndef NDEBUG
   char s[256];
-  ov_snprintf(s, 256, "current_frame: %lld", fp->current_frame);
+  ov_snprintf(s,
+              256,
+              "frame: %d key_frame: %d, pts: %d start_time: %d time_base:%f avg_frame_rate:%f",
+              (int)fp->current_frame,
+              fp->ffmpeg.packet->flags & AV_PKT_FLAG_KEY ? 1 : 0,
+              (int)fp->ffmpeg.packet->pts,
+              (int)fp->ffmpeg.stream->start_time,
+              av_q2d(fp->ffmpeg.stream->time_base),
+              av_q2d(fp->ffmpeg.stream->avg_frame_rate));
   OutputDebugStringA(s);
+#  endif
+}
 #endif
 
-  error err = eok();
-  int r = 0;
-receive_frame:
-  r = avcodec_receive_frame(fp->ffmpeg.cctx, fp->ffmpeg.frame);
-  switch (r) {
-  case 0:
-    goto cleanup;
-  case AVERROR(EAGAIN):
-  case AVERROR_EOF:
-  case AVERROR_INPUT_CHANGED:
-    break;
-  default:
-    err = errffmpeg(r);
-    goto cleanup;
-  }
-read_frame:
-  av_packet_unref(fp->ffmpeg.packet);
-  r = av_read_frame(fp->ffmpeg.fctx, fp->ffmpeg.packet);
-  if (r < 0) {
-    // flush
-    r = avcodec_send_packet(fp->ffmpeg.cctx, NULL);
-    switch (r) {
-    case 0:
-    case AVERROR(EAGAIN):
-      goto receive_frame;
-    case AVERROR_EOF:
-      err = errffmpeg(r); // decoder has been flushed
-      goto cleanup;
-    default:
-      err = errffmpeg(r);
-      goto cleanup;
-    }
-  }
-  if (fp->ffmpeg.packet->stream_index != fp->ffmpeg.stream->index) {
-    goto read_frame;
-  }
-  r = avcodec_send_packet(fp->ffmpeg.cctx, fp->ffmpeg.packet);
-  switch (r) {
-  case 0:
-    goto receive_frame;
-  case AVERROR(EAGAIN):
-    // not ready to accept avcodec_send_packet, must call avcodec_receive_frame.
-    goto receive_frame;
-  default:
-    err = errffmpeg(r);
-    goto cleanup;
-  }
-cleanup:
+static NODISCARD error grab(struct video *fp) {
+  error err = ffmpeg_grab(&fp->ffmpeg);
   if (efailed(err)) {
-    av_packet_unref(fp->ffmpeg.packet);
-  } else {
-    calc_current_frame(fp);
+    goto cleanup;
   }
+  calc_current_frame(fp);
+cleanup:
   return err;
 }
 
-static NODISCARD error jump(struct video *fp, int64_t frame) {
-  error err = eok();
+static NODISCARD error seek(struct video *fp, int frame) {
   int64_t time_stamp = av_rescale_q(frame, av_inv_q(fp->ffmpeg.stream->time_base), fp->ffmpeg.stream->avg_frame_rate);
 #ifndef NDEBUG
   char s[256];
@@ -128,60 +95,34 @@ static NODISCARD error jump(struct video *fp, int64_t frame) {
               av_q2d(fp->ffmpeg.stream->avg_frame_rate));
   OutputDebugStringA(s);
 #endif
-
-  int r = avformat_seek_file(fp->ffmpeg.fctx, fp->ffmpeg.stream->index, INT64_MIN, time_stamp, time_stamp, 0);
-  if (r < 0) {
-    err = errffmpeg(r);
-    goto cleanup;
-  }
-  avcodec_flush_buffers(fp->ffmpeg.cctx);
-  for (;;) {
-    err = grab(fp);
-    if (efailed(err)) {
-      err = ethru(err);
-      goto cleanup;
-    }
-    if (!fp->ffmpeg.frame->key_frame) {
-#ifndef NDEBUG
-      OutputDebugStringA("not keyframe so skipped");
-#endif
-      continue;
-    }
-    break;
-  }
-cleanup:
-  return err;
-}
-
-static NODISCARD error seek(struct video *fp, int frame) {
-  int f = frame;
-  error err = jump(fp, f);
+  error err = ffmpeg_seek(&fp->ffmpeg, time_stamp);
   if (efailed(err)) {
     err = ethru(err);
     goto cleanup;
   }
-  while (fp->current_frame > frame && f != 0) {
-    f -= 30;
-    if (f < 0) {
-      f = 0;
-    }
-#ifndef NDEBUG
-    char s[256];
-    wsprintfA(s, "re-jump: %d", f);
-    OutputDebugStringA(s);
-#endif
-    err = jump(fp, f);
-    if (efailed(err)) {
-      err = ethru(err);
-      goto cleanup;
-    }
+  err = grab(fp);
+  if (efailed(err)) {
+    err = ethru(err);
+    goto cleanup;
   }
   while (fp->current_frame < frame) {
+#if 1
     err = grab(fp);
     if (efailed(err)) {
       err = ethru(err);
       goto cleanup;
     }
+#else
+    // inacculate fast seek
+    // TODO: it may fails packet has AV_NOPTS_VALUE.
+    // TODO: break some frames until next keyframe.
+    int r = ffmpeg_read_packet(&fp->ffmpeg);
+    if (r < 0) {
+      err = errffmpeg(r);
+      break;
+    }
+    calc_current_packet(fp);
+#endif
   }
 cleanup:
   return err;
