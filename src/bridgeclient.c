@@ -554,7 +554,7 @@ cleanup:
       ereport(ipcclient_destroy(cp));
     }
     if (*pp) {
-      ereport(process_destroy(pp, true));
+      ereport(process_destroy(pp));
     }
   }
   return err;
@@ -602,7 +602,7 @@ static void process_finished(void *userdata) {
     ereport(ipcclient_destroy(&g_ipcc));
   }
   if (g_process) {
-    ereport(process_destroy(&g_process, false));
+    ereport(process_destroy(&g_process));
   }
   ereport(disable_family_windows(window, &disabled_windows));
   int const r = MessageBoxW(window,
@@ -641,7 +641,7 @@ cleanup:
       ereport(ipcclient_destroy(&new_ipcc));
     }
     if (new_process) {
-      ereport(process_destroy(&new_process, true));
+      ereport(process_destroy(&new_process));
     }
     atomic_store(&g_running_state, rs_unknown);
   } else {
@@ -698,7 +698,7 @@ static BOOL ffmpeg_input_exit(void) {
     ereport(ipcclient_destroy(&g_ipcc));
   }
   if (g_process) {
-    ereport(process_destroy(&g_process, true));
+    ereport(process_destroy(&g_process));
   }
   if (g_handles.ptr) {
     ereport(hmfree(&g_handles));

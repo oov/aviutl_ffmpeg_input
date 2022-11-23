@@ -44,14 +44,45 @@ static NODISCARD error create_event(HANDLE *const event, wchar_t *const name16) 
   return eok();
 }
 
+struct notifydata {
+  process_notify_func fn;
+  void *userdata;
+};
+
+static int call_notify(void *userdata) {
+  struct notifydata *d = userdata;
+  struct notifydata dl = *d;
+  ereport(mem_free(&userdata));
+  dl.fn(dl.userdata);
+  return 0;
+}
+
 static int worker(void *userdata) {
   struct process *p = userdata;
   WaitForSingleObject(p->process, INFINITE);
-  process_notify_func fn = p->opt.on_terminate;
-  void *fnu = p->opt.userdata;
-  if (fn && !atomic_load(&p->exiting)) {
-    fn(fnu);
+  if (atomic_load(&p->exiting)) {
+    return 0;
   }
+  if (!p->opt.on_terminate) {
+    return 0;
+  }
+  // if the destructor is called in the event handler, it will deadlock,
+  // so call it from another thread to avoid it.
+  struct notifydata *d = NULL;
+  error err = mem(&d, 1, sizeof(struct notifydata));
+  if (efailed(err)) {
+    ereport(err);
+    return 1;
+  }
+  d->fn = p->opt.on_terminate;
+  d->userdata = p->opt.userdata;
+  thrd_t th;
+  if (thrd_create(&th, call_notify, d) != thrd_success) {
+    ereport(errg(err_unexpected));
+    ereport(mem_free(&d));
+    return 1;
+  }
+  thrd_detach(th);
   return 0;
 }
 
@@ -151,7 +182,7 @@ cleanup:
   return err;
 }
 
-NODISCARD error process_destroy(struct process **const pp, bool const join_thread) {
+NODISCARD error process_destroy(struct process **const pp) {
   if (!pp || !*pp) {
     return errg(err_unexpected);
   }
@@ -162,12 +193,7 @@ NODISCARD error process_destroy(struct process **const pp, bool const join_threa
   if (WaitForSingleObject(p->process, 5000) == WAIT_TIMEOUT) {
     TerminateProcess(p->process, 1);
   }
-  if (join_thread) {
-    thrd_join(p->thread, NULL);
-  } else {
-    thrd_detach(p->thread);
-  }
-
+  thrd_join(p->thread, NULL);
   CloseHandle(p->process);
   CloseHandle(p->event);
   ereport(mem_free(pp));

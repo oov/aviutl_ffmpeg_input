@@ -13,5 +13,5 @@ struct process_options {
 };
 
 NODISCARD error process_create(struct process **const pp, struct process_options const *const opt);
-NODISCARD error process_destroy(struct process **const pp, bool const join_thread);
+NODISCARD error process_destroy(struct process **const pp);
 wchar_t const *process_get_unique_id(struct process *const p);
