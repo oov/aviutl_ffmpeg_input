@@ -51,27 +51,6 @@ static inline void calc_current_frame(struct video *fp) {
 #endif
 }
 
-#if 0
-static inline void calc_current_packet(struct video *fp) {
-  fp->current_frame = av_rescale_q(fp->ffmpeg.packet->pts - fp->ffmpeg.stream->start_time,
-                                   fp->ffmpeg.stream->avg_frame_rate,
-                                   av_inv_q(fp->ffmpeg.stream->time_base));
-#  ifndef NDEBUG
-  char s[256];
-  ov_snprintf(s,
-              256,
-              "frame: %d key_frame: %d, pts: %d start_time: %d time_base:%f avg_frame_rate:%f",
-              (int)fp->current_frame,
-              fp->ffmpeg.packet->flags & AV_PKT_FLAG_KEY ? 1 : 0,
-              (int)fp->ffmpeg.packet->pts,
-              (int)fp->ffmpeg.stream->start_time,
-              av_q2d(fp->ffmpeg.stream->time_base),
-              av_q2d(fp->ffmpeg.stream->avg_frame_rate));
-  OutputDebugStringA(s);
-#  endif
-}
-#endif
-
 static NODISCARD error grab(struct video *fp) {
   error err = ffmpeg_grab(&fp->ffmpeg);
   if (efailed(err)) {
@@ -83,6 +62,7 @@ cleanup:
 }
 
 static NODISCARD error seek(struct video *fp, int frame) {
+  error err = eok();
   int64_t time_stamp = av_rescale_q(frame, av_inv_q(fp->ffmpeg.stream->time_base), fp->ffmpeg.stream->avg_frame_rate);
 #ifndef NDEBUG
   char s[256];
@@ -95,34 +75,29 @@ static NODISCARD error seek(struct video *fp, int frame) {
               av_q2d(fp->ffmpeg.stream->avg_frame_rate));
   OutputDebugStringA(s);
 #endif
-  error err = ffmpeg_seek(&fp->ffmpeg, time_stamp);
-  if (efailed(err)) {
-    err = ethru(err);
-    goto cleanup;
-  }
-  err = grab(fp);
-  if (efailed(err)) {
-    err = ethru(err);
-    goto cleanup;
-  }
-  while (fp->current_frame < frame) {
-#if 1
+  for (;;) {
+    err = ffmpeg_seek(&fp->ffmpeg, time_stamp);
+    if (efailed(err)) {
+      err = ethru(err);
+      goto cleanup;
+    }
     err = grab(fp);
     if (efailed(err)) {
       err = ethru(err);
       goto cleanup;
     }
-#else
-    // inacculate fast seek
-    // TODO: it may fails packet has AV_NOPTS_VALUE.
-    // TODO: break some frames until next keyframe.
-    int r = ffmpeg_read_packet(&fp->ffmpeg);
-    if (r < 0) {
-      err = errffmpeg(r);
-      break;
+    if (fp->current_frame > frame) {
+      time_stamp = fp->ffmpeg.frame->pts - 1;
+      continue;
     }
-    calc_current_packet(fp);
-#endif
+    break;
+  }
+  while (fp->current_frame < frame) {
+    err = grab(fp);
+    if (efailed(err)) {
+      err = ethru(err);
+      goto cleanup;
+    }
   }
 cleanup:
   return err;

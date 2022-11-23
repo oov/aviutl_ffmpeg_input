@@ -79,6 +79,7 @@ cleanup:
 }
 
 static NODISCARD error seek(struct audio *fp, int64_t sample) {
+  error err = eok();
   int64_t time_stamp =
       av_rescale_q(sample, av_inv_q(fp->ffmpeg.stream->time_base), av_make_q(fp->ffmpeg.cctx->sample_rate, 1));
 #ifndef NDEBUG
@@ -94,16 +95,23 @@ static NODISCARD error seek(struct audio *fp, int64_t sample) {
     OutputDebugStringA(s);
   }
 #endif
-  error err = ffmpeg_seek(&fp->ffmpeg, time_stamp);
-  if (efailed(err)) {
-    err = ethru(err);
-    goto cleanup;
-  }
-  fp->jumped = true;
-  err = grab(fp);
-  if (efailed(err)) {
-    err = ethru(err);
-    goto cleanup;
+  for (;;) {
+    err = ffmpeg_seek(&fp->ffmpeg, time_stamp);
+    if (efailed(err)) {
+      err = ethru(err);
+      goto cleanup;
+    }
+    fp->jumped = true;
+    err = grab(fp);
+    if (efailed(err)) {
+      err = ethru(err);
+      goto cleanup;
+    }
+    if (fp->current_sample_pos > sample) {
+      time_stamp = fp->ffmpeg.frame->pts - 1;
+      continue;
+    }
+    break;
   }
   while (fp->current_sample_pos + fp->ffmpeg.frame->nb_samples < sample) {
 #ifndef NDEBUG
