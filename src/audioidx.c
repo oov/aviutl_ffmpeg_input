@@ -4,6 +4,11 @@
 
 #include "ovthreads.h"
 
+#ifndef NDEBUG
+#  include <ovprintf.h>
+#  include <ovutil/win32.h>
+#endif
+
 #include <stdatomic.h>
 
 struct item {
@@ -62,7 +67,18 @@ static int indexer(void *userdata) {
       err = ethru(err);
       goto cleanup;
     }
-    samples += av_get_audio_frame_duration(fs.cctx, fs.packet->size);
+    int64_t const packet_samples =
+        av_get_audio_frame_duration(fs.cctx, fs.packet->size ? fs.packet->size : fs.cctx->frame_size);
+    if (!packet_samples) {
+      err = errg(err_fail);
+      goto cleanup;
+    }
+#ifndef NDEBUG
+    char s[256];
+    ov_snprintf(s, 256, "aidx: pts: %lld / samplepos: %lld", fs.packet->pts, packet_samples);
+    OutputDebugStringA(s);
+#endif
+    samples += packet_samples;
   }
 cleanup:
   ffmpeg_close(&fs);
