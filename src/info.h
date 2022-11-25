@@ -2,23 +2,6 @@
 
 #include <stdint.h>
 
-#ifndef PACKED
-#  if __has_c_attribute(PACKED)
-#    define PACKED [[packed]]
-#  elif __has_attribute(packed)
-#    define PACKED __attribute__((packed))
-#  else
-#    define PACKED
-#  endif
-#endif // #endif
-
-#ifdef __GNUC__
-#  pragma GCC diagnostic push
-#  if __has_warning("-Wpacked")
-#    pragma GCC diagnostic ignored "-Wpacked"
-#  endif
-#endif // __GNUC__
-
 struct info_video {
   int64_t frames;
   int32_t width;
@@ -35,7 +18,3 @@ struct info_audio {
   int16_t channels;
   int16_t bit_depth;
 };
-
-#ifdef __GNUC__
-#  pragma GCC diagnostic pop
-#endif // __GNUC__
