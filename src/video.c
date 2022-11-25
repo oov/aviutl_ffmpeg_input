@@ -32,7 +32,7 @@ static inline void get_info(struct video const *const v, struct info_video *cons
               "v duration: %lld / frames: %lld / start_time: %lld",
               v->ffmpeg.fctx->duration,
               vi->frames,
-              v->ffmpeg.fctx->start_time);
+              v->ffmpeg.stream->start_time);
   OutputDebugStringA(s);
 #endif
 }
@@ -267,4 +267,11 @@ cleanup:
     get_info(fp, vi);
   }
   return err;
+}
+
+int64_t video_get_start_time(struct video *const v) {
+  if (!v) {
+    return AV_NOPTS_VALUE;
+  }
+  return av_rescale_q(v->ffmpeg.stream->start_time, v->ffmpeg.stream->time_base, AV_TIME_BASE_Q);
 }

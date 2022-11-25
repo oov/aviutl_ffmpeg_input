@@ -41,7 +41,7 @@ static inline void get_info(struct audio const *const a, struct info_audio *cons
               "a duration: %lld / samples: %lld / start_time: %lld",
               a->ffmpeg.fctx->duration,
               ai->samples,
-              a->ffmpeg.fctx->start_time);
+              a->ffmpeg.stream->start_time);
   OutputDebugStringA(s);
 #endif
 }
@@ -314,4 +314,11 @@ cleanup:
     get_info(fp, ai);
   }
   return err;
+}
+
+int64_t audio_get_start_time(struct audio *const a) {
+  if (!a || !a->ffmpeg.stream) {
+    return AV_NOPTS_VALUE;
+  }
+  return av_rescale_q(a->ffmpeg.stream->start_time, a->ffmpeg.stream->time_base, AV_TIME_BASE_Q);
 }

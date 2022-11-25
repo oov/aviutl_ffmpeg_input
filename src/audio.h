@@ -16,3 +16,4 @@ NODISCARD error audio_create(struct audio **const app,
 void audio_destroy(struct audio **const app);
 NODISCARD error
 audio_read(struct audio *const fp, int64_t const offset, int const length, void *const buf, int *const written);
+int64_t audio_get_start_time(struct audio *const a);

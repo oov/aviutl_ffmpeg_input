@@ -30,3 +30,4 @@ NODISCARD error video_create(struct video **const vpp,
                              struct video_options const *const opt);
 void video_destroy(struct video **const vpp);
 NODISCARD error video_read(struct video *const v, int64_t frame, void *buf, size_t *written);
+int64_t video_get_start_time(struct video *const v);
