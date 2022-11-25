@@ -59,4 +59,5 @@ void ffmpeg_close(struct ffmpeg_stream *const fs);
 
 NODISCARD error ffmpeg_seek(struct ffmpeg_stream *const fs, int64_t const timestamp_in_stream_time_base);
 
+int ffmpeg_read_packet(struct ffmpeg_stream *const fs);
 NODISCARD error ffmpeg_grab(struct ffmpeg_stream *const fs);

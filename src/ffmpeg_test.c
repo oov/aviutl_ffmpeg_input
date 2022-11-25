@@ -92,7 +92,7 @@ static void test_seek(void) {
   if (!TEST_SUCCEEDED_F(ffmpeg_seek(&fs, time_stamp))) {
     goto cleanup;
   }
-  if (!TEST_CHECK((r = read_packet(&fs)) == 0)) {
+  if (!TEST_CHECK((r = ffmpeg_read_packet(&fs)) == 0)) {
     TEST_MSG("want 0 got %d", r);
     err = errffmpeg(r);
     goto cleanup;

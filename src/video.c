@@ -27,7 +27,12 @@ static inline void get_info(struct video const *const v, struct info_video *cons
   vi->frames = av_rescale_q(v->ffmpeg.fctx->duration, v->ffmpeg.stream->avg_frame_rate, av_inv_q(AV_TIME_BASE_Q));
 #ifndef NDEBUG
   char s[256];
-  ov_snprintf(s, 256, "v duration: %lld, frames: %lld", v->ffmpeg.fctx->duration, vi->frames);
+  ov_snprintf(s,
+              256,
+              "v duration: %lld / frames: %lld / start_time: %lld",
+              v->ffmpeg.fctx->duration,
+              vi->frames,
+              v->ffmpeg.fctx->start_time);
   OutputDebugStringA(s);
 #endif
 }

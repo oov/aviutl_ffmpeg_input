@@ -449,7 +449,7 @@ NODISCARD error ffmpeg_seek(struct ffmpeg_stream *const fs, int64_t const timest
 
 static int inline receive_frame(struct ffmpeg_stream *const fs) { return avcodec_receive_frame(fs->cctx, fs->frame); }
 
-static int inline read_packet(struct ffmpeg_stream *const fs) {
+int ffmpeg_read_packet(struct ffmpeg_stream *const fs) {
   for (;;) {
     av_packet_unref(fs->packet);
     int const r = av_read_frame(fs->fctx, fs->packet);
@@ -483,7 +483,7 @@ NODISCARD error ffmpeg_grab(struct ffmpeg_stream *const fs) {
       err = errffmpeg(r);
       goto cleanup;
     }
-    r = read_packet(fs);
+    r = ffmpeg_read_packet(fs);
     if (r < 0) {
       // flush
       r = send_null_packet(fs);

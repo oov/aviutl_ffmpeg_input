@@ -5,6 +5,7 @@
 #  include <ovutil/win32.h>
 #endif
 
+#include "audioidx.h"
 #include "ffmpeg.h"
 
 typedef int16_t sample_t;
@@ -14,6 +15,7 @@ static int const g_sample_size = sizeof(sample_t) * g_channels;
 
 struct audio {
   struct ffmpeg_stream ffmpeg;
+  struct audioidx *idx;
 
   SwrContext *swr_context;
   uint8_t *swr_buf;
@@ -34,20 +36,32 @@ static inline void get_info(struct audio const *const a, struct info_audio *cons
   ai->samples = av_rescale_q(a->ffmpeg.fctx->duration, AV_TIME_BASE_Q, av_make_q(1, a->ffmpeg.cctx->sample_rate));
 #ifndef NDEBUG
   char s[256];
-  ov_snprintf(s, 256, "a duration: %lld, samples: %lld", a->ffmpeg.fctx->duration, ai->samples);
+  ov_snprintf(s,
+              256,
+              "a duration: %lld / samples: %lld / start_time: %lld",
+              a->ffmpeg.fctx->duration,
+              ai->samples,
+              a->ffmpeg.fctx->start_time);
   OutputDebugStringA(s);
 #endif
 }
 
 static inline void calc_current_frame(struct audio *fp) {
-  // It seems pts value may be inaccurate.
-  // There would be no way to correct the values except to recalculate from the first frame.
-  // This program allows inaccurate values.
-  // Instead, it avoids the accumulation of errors by not using the received pts as long as it continues to read frames.
   if (fp->jumped) {
-    fp->current_sample_pos = av_rescale_q(fp->ffmpeg.frame->pts - fp->ffmpeg.stream->start_time,
-                                          fp->ffmpeg.stream->time_base,
-                                          av_make_q(1, fp->ffmpeg.cctx->sample_rate));
+    int64_t pos = audioidx_get(fp->idx, fp->ffmpeg.packet->pts);
+    if (pos != -1) {
+      // found corrent sample position
+      fp->current_sample_pos = pos;
+    } else {
+      // It seems pts value may be inaccurate.
+      // There would be no way to correct the values except to recalculate from the first frame.
+      // This program allows inaccurate values.
+      // Instead, it avoids the accumulation of errors by not using
+      // the received pts as long as it continues to read frames.
+      fp->current_sample_pos = av_rescale_q(fp->ffmpeg.frame->pts - fp->ffmpeg.stream->start_time,
+                                            fp->ffmpeg.stream->time_base,
+                                            av_make_q(1, fp->ffmpeg.cctx->sample_rate));
+    }
     fp->jumped = false;
   } else {
     fp->current_sample_pos += fp->ffmpeg.frame->nb_samples;
@@ -228,6 +242,7 @@ void audio_destroy(struct audio **const app) {
     av_freep(&a->swr_buf);
   }
   ffmpeg_close(&a->ffmpeg);
+  audioidx_destroy(&a->idx);
   ereport(mem_free(app));
 }
 
@@ -245,6 +260,12 @@ NODISCARD error audio_create(struct audio **const app,
   }
   *fp = (struct audio){0};
   err = ffmpeg_open(&fp->ffmpeg, opt->filepath, AVMEDIA_TYPE_AUDIO, opt->preferred_decoders);
+  if (efailed(err)) {
+    err = ethru(err);
+    goto cleanup;
+  }
+
+  err = audioidx_create(&fp->idx, opt->filepath);
   if (efailed(err)) {
     err = ethru(err);
     goto cleanup;
