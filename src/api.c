@@ -14,6 +14,7 @@
 struct file {
   struct video *v;
   struct audio *a;
+  bool invert_phase;
   BITMAPINFOHEADER video_format;
   WAVEFORMATEX audio_format;
   INPUT_INFO info;
@@ -45,6 +46,15 @@ static int ffmpeg_input_read_audio(INPUT_HANDLE ih, int start, int length, void 
   if (efailed(err)) {
     ereport(err);
     return 0;
+  }
+  if (fp->invert_phase) {
+    int16_t *w = buf;
+    for (int i = 0; i < written; ++i) {
+      *w = -*w;
+      w++;
+      *w = -*w;
+      w++;
+    }
   }
   return written;
 }
@@ -150,6 +160,7 @@ static INPUT_HANDLE ffmpeg_input_open(char *filepath) {
   *fp = (struct file){
       .v = v,
       .a = a,
+      .invert_phase = config_get_invert_phase(config),
   };
   INPUT_INFO *ii = &fp->info;
   if (v) {
@@ -364,12 +375,21 @@ enum config_control {
   ID_BTN_ABOUT = 100,
   ID_EDT_DECODERS = 1001,
   ID_CMB_SCALING = 1003,
+  ID_CHK_INVERT_PHASE = 2000,
 };
 
 static wchar_t *ver_to_str(wchar_t *const buf, char const *const ident, unsigned int ver) {
   wsprintfW(
       buf, L"  %hs linked to %d.%d.%d\r\n", ident, AV_VERSION_MAJOR(ver), AV_VERSION_MINOR(ver), AV_VERSION_MICRO(ver));
   return buf;
+}
+
+static bool get_check(HWND const window, int const control_id) {
+  return SendMessageW(GetDlgItem(window, control_id), BM_GETCHECK, 0, 0) == BST_CHECKED;
+}
+
+static void set_check(HWND const window, int const control_id, bool const checked) {
+  SendMessageW(GetDlgItem(window, control_id), BM_SETCHECK, checked ? BST_CHECKED : BST_UNCHECKED, 0);
 }
 
 static INT_PTR CALLBACK config_wndproc(HWND const dlg, UINT const message, WPARAM const wparam, LPARAM const lparam) {
@@ -389,6 +409,7 @@ static INT_PTR CALLBACK config_wndproc(HWND const dlg, UINT const message, WPARA
       }
     }
     SendMessageW(h, CB_SETCURSEL, (WPARAM)selected_index, 0);
+    set_check(h, ID_CHK_INVERT_PHASE, config_get_invert_phase(pr->config));
     return TRUE;
   }
   case WM_DESTROY:
@@ -426,6 +447,11 @@ static INT_PTR CALLBACK config_wndproc(HWND const dlg, UINT const message, WPARA
           err = ethru(err);
           goto cleanup;
         }
+      }
+      err = config_set_invert_phase(pr->config, get_check(dlg, ID_CHK_INVERT_PHASE));
+      if (efailed(err)) {
+        err = ethru(err);
+        goto cleanup;
       }
     cleanup:
       ereport(sfree(&s));

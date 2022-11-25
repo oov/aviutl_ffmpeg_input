@@ -9,6 +9,7 @@ struct config {
   struct str preferred_decoders;
   bool need_postfix;
   enum video_format_scaling_algorithm scaling;
+  bool invert_phase;
 };
 
 NODISCARD error config_create(struct config **cp) {
@@ -34,6 +35,8 @@ char const *config_get_preferred_decoders(struct config const *const c) {
 enum video_format_scaling_algorithm config_get_scaling(struct config const *const c) { return c->scaling; }
 
 bool config_get_need_postfix(struct config const *const c) { return c->need_postfix; }
+
+bool config_get_invert_phase(struct config const *const c) { return c->invert_phase; }
 
 NODISCARD error config_set_preferred_decoders(struct config *const c, char const *const preferred_decoders) {
   if (!c || !preferred_decoders) {
@@ -89,6 +92,18 @@ NODISCARD error config_set_scaling(struct config *const c, enum video_format_sca
     break;
   }
   c->scaling = scaling;
+  c->modified = true;
+  return eok();
+}
+
+NODISCARD error config_set_invert_phase(struct config *const c, bool const invert_phase) {
+  if (!c) {
+    return errg(err_invalid_arugment);
+  }
+  if (c->invert_phase == !!invert_phase) {
+    return eok();
+  }
+  c->invert_phase = !!invert_phase;
   c->modified = true;
   return eok();
 }
@@ -156,6 +171,11 @@ static NODISCARD error load(struct config *c) {
     err = ethru(err);
     goto cleanup;
   }
+  err = config_set_invert_phase(c, GetPrivateProfileIntA("audio", "invert_phase", 0, filepath.ptr) != 0);
+  if (efailed(err)) {
+    err = ethru(err);
+    goto cleanup;
+  }
 cleanup:
   ereport(sfree(&filepath));
   return err;
@@ -181,6 +201,7 @@ NODISCARD error config_load(struct config *c) {
   tmp->preferred_decoders = (struct str){0};
   c->need_postfix = tmp->need_postfix;
   c->scaling = tmp->scaling;
+  c->invert_phase = tmp->invert_phase;
   c->modified = false;
 cleanup:
   config_destroy(&tmp);
@@ -210,6 +231,10 @@ NODISCARD error config_save(struct config *c) {
     goto cleanup;
   }
   if (!WritePrivateProfileStringA("video", "scaling", ov_itoa((int64_t)(config_get_scaling(c)), buf), filepath.ptr)) {
+    err = errhr(HRESULT_FROM_WIN32(GetLastError()));
+    goto cleanup;
+  }
+  if (!WritePrivateProfileStringA("audio", "invert_phase", config_get_invert_phase(c) ? "1" : "0", filepath.ptr)) {
     err = errhr(HRESULT_FROM_WIN32(GetLastError()));
     goto cleanup;
   }
