@@ -30,14 +30,13 @@ failed:
 #if USE_FILE_MAPPING
 struct mappedfile {
   struct mapped *mp;
-  AVIOContext *ctx;
 };
 
 static int w32read(void *opaque, uint8_t *buf, int buf_size) {
   struct mappedfile *const file = opaque;
   int const r = mapped_read(file->mp, buf, buf_size);
   if (r == 0) {
-    file->ctx->eof_reached = 1;
+    return AVERROR_EOF;
   }
   return r;
 }
@@ -49,7 +48,6 @@ static int64_t w32seek(void *opaque, int64_t offset, int whence) {
 #else
 struct w32file {
   HANDLE h;
-  AVIOContext *ctx;
 };
 
 static int w32read(void *opaque, uint8_t *buf, int buf_size) {
@@ -59,7 +57,7 @@ static int w32read(void *opaque, uint8_t *buf, int buf_size) {
     return -EIO;
   }
   if (read == 0) {
-    file->ctx->eof_reached = 1;
+    return AVERROR_EOF;
   }
   return (int)read;
 }
@@ -145,7 +143,6 @@ static NODISCARD error create_format_context(wchar_t const *const filename,
     err = emsg(err_type_generic, err_fail, &native_unmanaged_const(NSTR("avio_alloc_context failed")));
     goto cleanup;
   }
-  file->ctx = ctx->pb;
   ctx->pb->direct = 1;
 #else
   file = av_malloc(sizeof(struct w32file));
@@ -166,7 +163,6 @@ static NODISCARD error create_format_context(wchar_t const *const filename,
     err = emsg(err_type_generic, err_fail, &native_unmanaged_const(NSTR("avio_alloc_context failed")));
     goto cleanup;
   }
-  file->ctx = ctx->pb;
 #endif
   *format_context = ctx;
 cleanup:
