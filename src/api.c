@@ -409,7 +409,7 @@ static INT_PTR CALLBACK config_wndproc(HWND const dlg, UINT const message, WPARA
       }
     }
     SendMessageW(h, CB_SETCURSEL, (WPARAM)selected_index, 0);
-    set_check(h, ID_CHK_INVERT_PHASE, config_get_invert_phase(pr->config));
+    set_check(dlg, ID_CHK_INVERT_PHASE, config_get_invert_phase(pr->config));
     return TRUE;
   }
   case WM_DESTROY:
