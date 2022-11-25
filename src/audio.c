@@ -25,6 +25,7 @@ struct audio {
   int current_samples;
   bool jumped;
 
+  int64_t video_start_time;
   int64_t current_sample_pos;
   int64_t swr_buf_sample_pos;
 };
@@ -58,7 +59,8 @@ static inline void calc_current_frame(struct audio *fp) {
       // This program allows inaccurate values.
       // Instead, it avoids the accumulation of errors by not using
       // the received pts as long as it continues to read frames.
-      fp->current_sample_pos = av_rescale_q(fp->ffmpeg.frame->pts - fp->ffmpeg.stream->start_time,
+      int64_t const video_start_time = av_rescale_q(fp->video_start_time, AV_TIME_BASE_Q, fp->ffmpeg.stream->time_base);
+      fp->current_sample_pos = av_rescale_q(fp->ffmpeg.frame->pts - (video_start_time - fp->ffmpeg.stream->start_time),
                                             fp->ffmpeg.stream->time_base,
                                             av_make_q(1, fp->ffmpeg.cctx->sample_rate));
     }
@@ -258,14 +260,16 @@ NODISCARD error audio_create(struct audio **const app,
     ereport(err);
     return NULL;
   }
-  *fp = (struct audio){0};
+  *fp = (struct audio){
+      .video_start_time = opt->video_start_time,
+  };
   err = ffmpeg_open(&fp->ffmpeg, opt->filepath, AVMEDIA_TYPE_AUDIO, opt->preferred_decoders);
   if (efailed(err)) {
     err = ethru(err);
     goto cleanup;
   }
 
-  err = audioidx_create(&fp->idx, opt->filepath);
+  err = audioidx_create(&fp->idx, opt->filepath, opt->video_start_time);
   if (efailed(err)) {
     err = ethru(err);
     goto cleanup;

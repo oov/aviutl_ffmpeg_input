@@ -142,6 +142,7 @@ static INPUT_HANDLE ffmpeg_input_open(char *filepath) {
                      &(struct audio_options){
                          .filepath = ws.ptr,
                          .preferred_decoders = config_get_preferred_decoders(config),
+                         .video_start_time = video_get_start_time(v),
                      });
   if (efailed(err)) {
     err = ethru(err);

@@ -28,6 +28,7 @@ struct indexer_context {
   struct cndvar cv;
   error err;
   wchar_t const *filepath;
+  int64_t video_start_time;
 };
 
 static int indexer(void *userdata) {
@@ -39,6 +40,8 @@ static int indexer(void *userdata) {
     err = ethru(err);
     goto cleanup;
   }
+
+  int64_t const video_start_time = av_rescale_q(ictx->video_start_time, AV_TIME_BASE_Q, fs.stream->time_base);
 
   ictx->err = eok();
   cndvar_lock(&ictx->cv);
@@ -57,8 +60,16 @@ static int indexer(void *userdata) {
       goto cleanup;
     }
     if (samples == AV_NOPTS_VALUE) {
-      samples = av_rescale_q(
-          fs.packet->pts - fs.stream->start_time, fs.stream->time_base, av_make_q(1, fs.cctx->sample_rate));
+#ifndef NDEBUG
+      if (fs.packet->pts < 10000) {
+        char s[256];
+        ov_snprintf(s, 256, "aidx: a_start_time: %lld / v_start_time: %lld", fs.stream->start_time, video_start_time);
+        OutputDebugStringA(s);
+      }
+#endif
+      samples = av_rescale_q(fs.packet->pts - (video_start_time - fs.stream->start_time),
+                             fs.stream->time_base,
+                             av_make_q(1, fs.cctx->sample_rate));
     }
     mtx_lock(&ip->mtx);
     err = hmset(&ip->ptsmap, (&(struct item){.key = fs.packet->pts, .pos = samples}), NULL);
@@ -74,9 +85,11 @@ static int indexer(void *userdata) {
       goto cleanup;
     }
 #ifndef NDEBUG
-    char s[256];
-    ov_snprintf(s, 256, "aidx: pts: %lld / samplepos: %lld", fs.packet->pts, packet_samples);
-    OutputDebugStringA(s);
+    if (fs.packet->pts < 10000) {
+      char s[256];
+      ov_snprintf(s, 256, "aidx: pts: %lld / samplepos: %lld", fs.packet->pts, packet_samples);
+      OutputDebugStringA(s);
+    }
 #endif
     samples += packet_samples;
   }
@@ -93,12 +106,15 @@ cleanup:
   return 0;
 }
 
-NODISCARD error audioidx_create(struct audioidx **const ipp, wchar_t const *const filepath) {
+NODISCARD error audioidx_create(struct audioidx **const ipp,
+                                wchar_t const *const filepath,
+                                int64_t const video_start_time) {
   if (!ipp || *ipp || !filepath) {
     return errg(err_invalid_arugment);
   }
   struct indexer_context ictx = {
       .filepath = filepath,
+      .video_start_time = video_start_time,
   };
   cndvar_init(&ictx.cv);
   cndvar_lock(&ictx.cv);
