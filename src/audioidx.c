@@ -61,15 +61,19 @@ static int indexer(void *userdata) {
     }
     if (samples == AV_NOPTS_VALUE) {
 #ifndef NDEBUG
-      if (fs.packet->pts < 10000) {
-        char s[256];
-        ov_snprintf(s, 256, "aidx: a_start_time: %lld / v_start_time: %lld", fs.stream->start_time, video_start_time);
-        OutputDebugStringA(s);
-      }
+      char s[256];
+      int64_t fstart_time = av_rescale_q(fs.fctx->start_time, AV_TIME_BASE_Q, fs.stream->time_base);
+      ov_snprintf(s,
+                  256,
+                  "aidx start_time: pts: %lld / global: %lld / a: %lld / v: %lld",
+                  fs.packet->pts,
+                  fstart_time,
+                  fs.stream->start_time,
+                  video_start_time);
+      OutputDebugStringA(s);
 #endif
-      samples = av_rescale_q(fs.packet->pts - (video_start_time - fs.stream->start_time),
-                             fs.stream->time_base,
-                             av_make_q(1, fs.cctx->sample_rate));
+      samples =
+          av_rescale_q(fs.packet->pts - video_start_time, fs.stream->time_base, av_make_q(1, fs.cctx->sample_rate));
     }
     mtx_lock(&ip->mtx);
     err = hmset(&ip->ptsmap, (&(struct item){.key = fs.packet->pts, .pos = samples}), NULL);

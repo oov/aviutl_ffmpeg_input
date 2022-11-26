@@ -39,7 +39,7 @@ static inline void get_info(struct audio const *const a, struct info_audio *cons
   char s[256];
   ov_snprintf(s,
               256,
-              "a duration: %lld / samples: %lld / start_time: %lld",
+              "ainfo duration: %lld / samples: %lld / start_time: %lld",
               a->ffmpeg.fctx->duration,
               ai->samples,
               a->ffmpeg.stream->start_time);
@@ -60,7 +60,7 @@ static inline void calc_current_frame(struct audio *fp) {
       // Instead, it avoids the accumulation of errors by not using
       // the received pts as long as it continues to read frames.
       int64_t const video_start_time = av_rescale_q(fp->video_start_time, AV_TIME_BASE_Q, fp->ffmpeg.stream->time_base);
-      fp->current_sample_pos = av_rescale_q(fp->ffmpeg.frame->pts - (video_start_time - fp->ffmpeg.stream->start_time),
+      fp->current_sample_pos = av_rescale_q(fp->ffmpeg.frame->pts - video_start_time,
                                             fp->ffmpeg.stream->time_base,
                                             av_make_q(1, fp->ffmpeg.cctx->sample_rate));
     }
@@ -73,7 +73,7 @@ static inline void calc_current_frame(struct audio *fp) {
   char s[256];
   ov_snprintf(s,
               256,
-              "ts: %lld key_frame: %d, pts: %lld start_time: %lld time_base:%f sample_rate:%d",
+              "a samplepos: %lld key_frame: %d, pts: %lld start_time: %lld time_base:%f sample_rate:%d",
               fp->current_sample_pos,
               fp->ffmpeg.frame->key_frame,
               fp->ffmpeg.frame->pts,

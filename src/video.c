@@ -29,7 +29,7 @@ static inline void get_info(struct video const *const v, struct info_video *cons
   char s[256];
   ov_snprintf(s,
               256,
-              "v duration: %lld / frames: %lld / start_time: %lld",
+              "vinfo duration: %lld / frames: %lld / start_time: %lld",
               v->ffmpeg.fctx->duration,
               vi->frames,
               v->ffmpeg.stream->start_time);
@@ -45,10 +45,10 @@ static inline void calc_current_frame(struct video *fp) {
   char s[256];
   ov_snprintf(s,
               256,
-              "frame: %d key_frame: %d, pts: %d start_time: %d time_base:%f avg_frame_rate:%f",
+              "v frame: %d pts: %d key_frame: %d start_time: %d time_base:%f avg_frame_rate:%f",
               (int)fp->current_frame,
-              fp->ffmpeg.frame->key_frame ? 1 : 0,
               (int)fp->ffmpeg.frame->pts,
+              fp->ffmpeg.frame->key_frame ? 1 : 0,
               (int)fp->ffmpeg.stream->start_time,
               av_q2d(fp->ffmpeg.stream->time_base),
               av_q2d(fp->ffmpeg.stream->avg_frame_rate));
