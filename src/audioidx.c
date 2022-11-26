@@ -52,6 +52,7 @@ static int indexer(void *userdata) {
   ictx = NULL;
 
   int64_t samples = AV_NOPTS_VALUE;
+  int progress = 0;
   while (!atomic_load(&ip->exiting)) {
     int r = ffmpeg_read_packet(&fs);
     if (r < 0) {
@@ -93,12 +94,21 @@ static int indexer(void *userdata) {
       goto cleanup;
     }
 #ifndef NDEBUG
-    if (fs.packet->pts < 10000) {
+    if (fs.packet->pts < 1000) {
       char s[256];
       ov_snprintf(s, 256, "aidx: pts: %lld / samplepos: %lld", fs.packet->pts, packet_samples);
       OutputDebugStringA(s);
     }
 #endif
+    int const current_progress = (int)((10 * fs.packet->pts) / fs.stream->duration);
+    if (current_progress != progress) {
+#ifndef NDEBUG
+      char s[256];
+      ov_snprintf(s, 256, "aidx: %d%%", current_progress * 10);
+      OutputDebugStringA(s);
+#endif
+      progress = current_progress;
+    }
     samples += packet_samples;
   }
 cleanup:
