@@ -16,44 +16,50 @@ struct item {
   int64_t pos;
 };
 
+enum indexer_state {
+  is_stop,
+  is_running,
+};
+
 struct audioidx {
+  struct wstr filepath;
   struct hmap ptsmap;
   mtx_t mtx;
   cnd_t cnd;
+  int64_t video_start_time;
   int64_t created_pts;
   thrd_t indexer;
-  atomic_bool exiting;
+  enum indexer_state indexer_state;
 };
 
 struct indexer_context {
   struct audioidx *ip;
-  struct cndvar cv;
   error err;
-  wchar_t const *filepath;
-  int64_t video_start_time;
 };
 
 static int indexer(void *userdata) {
   struct indexer_context *ictx = userdata;
   struct audioidx *ip = ictx->ip;
   struct ffmpeg_stream fs = {0};
-  error err = ffmpeg_open(&fs, ictx->filepath, AVMEDIA_TYPE_AUDIO, NULL);
+  error err = ffmpeg_open(&fs, ip->filepath.ptr, AVMEDIA_TYPE_AUDIO, NULL);
   if (efailed(err)) {
     err = ethru(err);
     goto cleanup;
   }
 
-  int64_t const video_start_time = av_rescale_q(ictx->video_start_time, AV_TIME_BASE_Q, fs.stream->time_base);
+  int64_t const video_start_time = av_rescale_q(ip->video_start_time, AV_TIME_BASE_Q, fs.stream->time_base);
 
+  mtx_lock(&ip->mtx);
   ictx->err = eok();
-  cndvar_lock(&ictx->cv);
-  cndvar_signal(&ictx->cv, 1);
-  cndvar_unlock(&ictx->cv);
+  ictx->ip = NULL;
   ictx = NULL;
+  cnd_signal(&ip->cnd);
+  mtx_unlock(&ip->mtx);
 
   int64_t samples = AV_NOPTS_VALUE;
   int progress = 0;
-  while (!atomic_load(&ip->exiting)) {
+  enum indexer_state last_indexer_state = is_running;
+  while (last_indexer_state == is_running) {
     int r = ffmpeg_read_packet(&fs);
     if (r < 0) {
       if (r == AVERROR_EOF) {
@@ -81,6 +87,7 @@ static int indexer(void *userdata) {
     mtx_lock(&ip->mtx);
     err = hmset(&ip->ptsmap, (&(struct item){.key = fs.packet->pts, .pos = samples}), NULL);
     ip->created_pts = fs.packet->pts;
+    last_indexer_state = ip->indexer_state;
     cnd_signal(&ip->cnd);
     mtx_unlock(&ip->mtx);
     if (efailed(err)) {
@@ -115,16 +122,15 @@ cleanup:
   ffmpeg_close(&fs);
   mtx_lock(&ip->mtx);
   ip->created_pts = INT64_MAX;
-  cnd_signal(&ip->cnd);
-  mtx_unlock(&ip->mtx);
   if (ictx) {
     ictx->err = err;
-    cndvar_lock(&ictx->cv);
-    cndvar_signal(&ictx->cv, 1);
-    cndvar_unlock(&ictx->cv);
-  } else {
-    ereport(err);
+    ictx->ip = NULL;
+    ictx = NULL;
+    err = eok();
   }
+  cnd_signal(&ip->cnd);
+  mtx_unlock(&ip->mtx);
+  ereport(err);
   return 0;
 }
 
@@ -134,20 +140,16 @@ NODISCARD error audioidx_create(struct audioidx **const ipp,
   if (!ipp || *ipp || !filepath) {
     return errg(err_invalid_arugment);
   }
-  struct indexer_context ictx = {
-      .filepath = filepath,
-      .video_start_time = video_start_time,
-  };
-  cndvar_init(&ictx.cv);
-  cndvar_lock(&ictx.cv);
-  ictx.cv.var = 0;
   error err = mem(ipp, 1, sizeof(struct audioidx));
   if (efailed(err)) {
     err = ethru(err);
     goto cleanup;
   }
   struct audioidx *ip = *ipp;
-  *ip = (struct audioidx){0};
+  *ip = (struct audioidx){
+      .video_start_time = video_start_time,
+      .indexer_state = is_stop,
+  };
   mtx_init(&ip->mtx, mtx_plain | mtx_recursive);
   cnd_init(&ip->cnd);
   ip->created_pts = AV_NOPTS_VALUE;
@@ -156,15 +158,12 @@ NODISCARD error audioidx_create(struct audioidx **const ipp,
     err = ethru(err);
     goto cleanup;
   }
-  ictx.ip = ip;
-  if (thrd_create(&ip->indexer, indexer, &ictx) != thrd_success) {
-    err = errg(err_fail);
+  err = scpy(&ip->filepath, filepath);
+  if (efailed(err)) {
+    err = ethru(err);
     goto cleanup;
   }
-  cndvar_wait_while(&ictx.cv, 0);
 cleanup:
-  cndvar_unlock(&ictx.cv);
-  cndvar_exit(&ictx.cv);
   if (efailed(err)) {
     if (*ipp) {
       audioidx_destroy(ipp);
@@ -178,29 +177,62 @@ void audioidx_destroy(struct audioidx **const ipp) {
     return;
   }
   struct audioidx *ip = *ipp;
-  atomic_store(&ip->exiting, true);
-  thrd_join(ip->indexer, NULL);
+  mtx_lock(&ip->mtx);
+  bool const already_running = ip->indexer_state == is_running;
+  ip->indexer_state = is_stop;
+  mtx_unlock(&ip->mtx);
+  if (already_running) {
+    thrd_join(ip->indexer, NULL);
+  }
   ereport(hmfree(&ip->ptsmap));
+  ereport(sfree(&ip->filepath));
   cnd_destroy(&ip->cnd);
   mtx_destroy(&ip->mtx);
   ereport(mem_free(ipp));
 }
 
-int64_t audioidx_get(struct audioidx *const ip, int64_t const pts) {
-  int64_t pos = -1;
-  {
-    mtx_lock(&ip->mtx);
-    while (ip->created_pts < pts) {
-      cnd_wait(&ip->cnd, &ip->mtx);
-    }
-    struct item *p = NULL;
-    error err = hmget(&ip->ptsmap, (&(struct item){.key = pts}), &p);
-    if (efailed(err)) {
-      efree(&err);
-    } else if (p) {
-      pos = p->pos;
-    }
-    mtx_unlock(&ip->mtx);
+static NODISCARD error start_thread(struct audioidx *const ip) {
+  struct indexer_context ictx = {
+      .ip = ip,
+      .err = eok(),
+  };
+  ip->indexer_state = is_running;
+  if (thrd_create(&ip->indexer, indexer, &ictx) != thrd_success) {
+    ip->indexer_state = is_stop;
+    goto cleanup;
   }
+  while (ictx.ip) {
+    cnd_wait(&ip->cnd, &ip->mtx);
+  }
+cleanup:
+  return ictx.err;
+}
+
+int64_t audioidx_get(struct audioidx *const ip, int64_t const pts) {
+  error err = eok();
+  int64_t pos = -1;
+  mtx_lock(&ip->mtx);
+  if (ip->indexer_state != is_running) {
+    err = start_thread(ip);
+    if (efailed(err)) {
+      err = ethru(err);
+      goto cleanup;
+    }
+  }
+  while (ip->created_pts < pts) {
+    cnd_wait(&ip->cnd, &ip->mtx);
+  }
+  struct item *p = NULL;
+  err = hmget(&ip->ptsmap, (&(struct item){.key = pts}), &p);
+  if (efailed(err)) {
+    err = ethru(err);
+    goto cleanup;
+  }
+  if (p) {
+    pos = p->pos;
+  }
+cleanup:
+  mtx_unlock(&ip->mtx);
+  ereport(err);
   return pos;
 }

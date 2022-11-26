@@ -49,7 +49,7 @@ static inline void get_info(struct audio const *const a, struct info_audio *cons
 
 static inline void calc_current_frame(struct audio *fp) {
   if (fp->jumped) {
-    int64_t pos = audioidx_get(fp->idx, fp->ffmpeg.packet->pts);
+    int64_t pos = fp->idx ? audioidx_get(fp->idx, fp->ffmpeg.packet->pts) : -1;
     if (pos != -1) {
       // found corrent sample position
       fp->current_sample_pos = pos;
@@ -269,14 +269,14 @@ NODISCARD error audio_create(struct audio **const app,
     goto cleanup;
   }
 
-  err = audioidx_create(&fp->idx, opt->filepath, opt->video_start_time);
+  fp->jumped = true;
+  err = grab(fp);
   if (efailed(err)) {
     err = ethru(err);
     goto cleanup;
   }
 
-  fp->jumped = true;
-  err = grab(fp);
+  err = audioidx_create(&fp->idx, opt->filepath, opt->video_start_time);
   if (efailed(err)) {
     err = ethru(err);
     goto cleanup;
