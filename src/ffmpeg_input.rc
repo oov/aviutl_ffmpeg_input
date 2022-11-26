@@ -21,8 +21,9 @@ FONT 9, "Segoe UI"
     GROUPBOX "映像", -1, 8, 36, 184, 40
     LTEXT "カラーフォーマット変換時のスケーリングアルゴリズム(&C):", 1002, 16, 48, 168, 9
     COMBOBOX 1003, 16, 57, 168, 300, CBS_HASSTRINGS | CBS_AUTOHSCROLL | CBS_DROPDOWNLIST | WS_VSCROLL | WS_TABSTOP
-    GROUPBOX "音声", -1, 8, 80, 184, 28
-    AUTOCHECKBOX "位相を反転（デバッグ用）", 2000, 16, 92, 168, 9
+    GROUPBOX "音声", -1, 8, 80, 184, 41
+    AUTOCHECKBOX "音ズレ軽減", 2000, 16, 92, 168, 9
+    AUTOCHECKBOX "位相を反転（デバッグ用）", 2001, 16, 105, 168, 9
     PUSHBUTTON "&About...", 100, 8, 138, 48, 12
     LTEXT "※変更は AviUtl の再起動後に反映されます", -1, 8, 127, 184, 9, NOT WS_GROUP, WS_EX_RIGHT
 }

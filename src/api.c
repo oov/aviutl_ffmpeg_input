@@ -376,7 +376,8 @@ enum config_control {
   ID_BTN_ABOUT = 100,
   ID_EDT_DECODERS = 1001,
   ID_CMB_SCALING = 1003,
-  ID_CHK_INVERT_PHASE = 2000,
+  ID_CHK_USE_AUDIO_INDEX = 2000,
+  ID_CHK_INVERT_PHASE = 2001,
 };
 
 static wchar_t *ver_to_str(wchar_t *const buf, char const *const ident, unsigned int ver) {
@@ -410,6 +411,7 @@ static INT_PTR CALLBACK config_wndproc(HWND const dlg, UINT const message, WPARA
       }
     }
     SendMessageW(h, CB_SETCURSEL, (WPARAM)selected_index, 0);
+    set_check(dlg, ID_CHK_USE_AUDIO_INDEX, config_get_use_audio_index(pr->config));
     set_check(dlg, ID_CHK_INVERT_PHASE, config_get_invert_phase(pr->config));
     return TRUE;
   }
@@ -448,6 +450,11 @@ static INT_PTR CALLBACK config_wndproc(HWND const dlg, UINT const message, WPARA
           err = ethru(err);
           goto cleanup;
         }
+      }
+      err = config_set_use_audio_index(pr->config, get_check(dlg, ID_CHK_USE_AUDIO_INDEX));
+      if (efailed(err)) {
+        err = ethru(err);
+        goto cleanup;
       }
       err = config_set_invert_phase(pr->config, get_check(dlg, ID_CHK_INVERT_PHASE));
       if (efailed(err)) {

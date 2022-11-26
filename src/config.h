@@ -13,9 +13,11 @@ void config_destroy(struct config **cp);
 char const *config_get_preferred_decoders(struct config const *const c);
 bool config_get_need_postfix(struct config const *const c);
 enum video_format_scaling_algorithm config_get_scaling(struct config const *const c);
+bool config_get_use_audio_index(struct config const *const c);
 bool config_get_invert_phase(struct config const *const c);
 
 NODISCARD error config_set_preferred_decoders(struct config *const c, char const *const preferred_decoders);
 NODISCARD error config_set_need_postfix(struct config *const c, bool const need_postfix);
 NODISCARD error config_set_scaling(struct config *const c, enum video_format_scaling_algorithm scaling);
+NODISCARD error config_set_use_audio_index(struct config *const c, bool const use_audio_index);
 NODISCARD error config_set_invert_phase(struct config *const c, bool const invert_phase);

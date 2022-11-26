@@ -9,6 +9,7 @@ struct config {
   struct str preferred_decoders;
   bool need_postfix;
   enum video_format_scaling_algorithm scaling;
+  bool use_audio_index;
   bool invert_phase;
 };
 
@@ -35,6 +36,8 @@ char const *config_get_preferred_decoders(struct config const *const c) {
 enum video_format_scaling_algorithm config_get_scaling(struct config const *const c) { return c->scaling; }
 
 bool config_get_need_postfix(struct config const *const c) { return c->need_postfix; }
+
+bool config_get_use_audio_index(struct config const *const c) { return c->use_audio_index; }
 
 bool config_get_invert_phase(struct config const *const c) { return c->invert_phase; }
 
@@ -92,6 +95,18 @@ NODISCARD error config_set_scaling(struct config *const c, enum video_format_sca
     break;
   }
   c->scaling = scaling;
+  c->modified = true;
+  return eok();
+}
+
+NODISCARD error config_set_use_audio_index(struct config *const c, bool const use_audio_index) {
+  if (!c) {
+    return errg(err_invalid_arugment);
+  }
+  if (c->use_audio_index == !!use_audio_index) {
+    return eok();
+  }
+  c->use_audio_index = !!use_audio_index;
   c->modified = true;
   return eok();
 }
@@ -171,6 +186,11 @@ static NODISCARD error load(struct config *c) {
     err = ethru(err);
     goto cleanup;
   }
+  err = config_set_use_audio_index(c, GetPrivateProfileIntA("audio", "use_audio_index", 0, filepath.ptr) != 0);
+  if (efailed(err)) {
+    err = ethru(err);
+    goto cleanup;
+  }
   err = config_set_invert_phase(c, GetPrivateProfileIntA("audio", "invert_phase", 0, filepath.ptr) != 0);
   if (efailed(err)) {
     err = ethru(err);
@@ -201,6 +221,7 @@ NODISCARD error config_load(struct config *c) {
   tmp->preferred_decoders = (struct str){0};
   c->need_postfix = tmp->need_postfix;
   c->scaling = tmp->scaling;
+  c->use_audio_index = tmp->use_audio_index;
   c->invert_phase = tmp->invert_phase;
   c->modified = false;
 cleanup:
@@ -231,6 +252,11 @@ NODISCARD error config_save(struct config *c) {
     goto cleanup;
   }
   if (!WritePrivateProfileStringA("video", "scaling", ov_itoa((int64_t)(config_get_scaling(c)), buf), filepath.ptr)) {
+    err = errhr(HRESULT_FROM_WIN32(GetLastError()));
+    goto cleanup;
+  }
+  if (!WritePrivateProfileStringA(
+          "audio", "use_audio_index", config_get_use_audio_index(c) ? "1" : "0", filepath.ptr)) {
     err = errhr(HRESULT_FROM_WIN32(GetLastError()));
     goto cleanup;
   }

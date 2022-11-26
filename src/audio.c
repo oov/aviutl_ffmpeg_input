@@ -276,10 +276,12 @@ NODISCARD error audio_create(struct audio **const app,
     goto cleanup;
   }
 
-  err = audioidx_create(&fp->idx, opt->filepath, opt->video_start_time);
-  if (efailed(err)) {
-    err = ethru(err);
-    goto cleanup;
+  if (opt->use_audio_index) {
+    err = audioidx_create(&fp->idx, opt->filepath, opt->video_start_time);
+    if (efailed(err)) {
+      err = ethru(err);
+      goto cleanup;
+    }
   }
 
   fp->swr_buf_len = fp->ffmpeg.cctx->sample_rate * g_channels;

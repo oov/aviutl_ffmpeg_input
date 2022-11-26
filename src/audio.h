@@ -9,6 +9,7 @@ struct audio_options {
   wchar_t const *filepath;
   char const *preferred_decoders;
   int64_t video_start_time;
+  bool use_audio_index;
 };
 
 NODISCARD error audio_create(struct audio **const app,
