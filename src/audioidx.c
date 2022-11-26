@@ -19,6 +19,8 @@ struct item {
 struct audioidx {
   struct hmap ptsmap;
   mtx_t mtx;
+  cnd_t cnd;
+  int64_t created_pts;
   thrd_t indexer;
   atomic_bool exiting;
 };
@@ -77,6 +79,8 @@ static int indexer(void *userdata) {
     }
     mtx_lock(&ip->mtx);
     err = hmset(&ip->ptsmap, (&(struct item){.key = fs.packet->pts, .pos = samples}), NULL);
+    ip->created_pts = fs.packet->pts;
+    cnd_signal(&ip->cnd);
     mtx_unlock(&ip->mtx);
     if (efailed(err)) {
       err = ethru(err);
@@ -99,6 +103,10 @@ static int indexer(void *userdata) {
   }
 cleanup:
   ffmpeg_close(&fs);
+  mtx_lock(&ip->mtx);
+  ip->created_pts = INT64_MAX;
+  cnd_signal(&ip->cnd);
+  mtx_unlock(&ip->mtx);
   if (ictx) {
     ictx->err = err;
     cndvar_lock(&ictx->cv);
@@ -131,6 +139,8 @@ NODISCARD error audioidx_create(struct audioidx **const ipp,
   struct audioidx *ip = *ipp;
   *ip = (struct audioidx){0};
   mtx_init(&ip->mtx, mtx_plain | mtx_recursive);
+  cnd_init(&ip->cnd);
+  ip->created_pts = AV_NOPTS_VALUE;
   err = hmnews(&ip->ptsmap, sizeof(struct item), 128, sizeof(int64_t));
   if (efailed(err)) {
     err = ethru(err);
@@ -161,6 +171,7 @@ void audioidx_destroy(struct audioidx **const ipp) {
   atomic_store(&ip->exiting, true);
   thrd_join(ip->indexer, NULL);
   ereport(hmfree(&ip->ptsmap));
+  cnd_destroy(&ip->cnd);
   mtx_destroy(&ip->mtx);
   ereport(mem_free(ipp));
 }
@@ -169,6 +180,9 @@ int64_t audioidx_get(struct audioidx *const ip, int64_t const pts) {
   int64_t pos = -1;
   {
     mtx_lock(&ip->mtx);
+    while (ip->created_pts < pts) {
+      cnd_wait(&ip->cnd, &ip->mtx);
+    }
     struct item *p = NULL;
     error err = hmget(&ip->ptsmap, (&(struct item){.key = pts}), &p);
     if (efailed(err)) {
