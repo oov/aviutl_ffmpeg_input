@@ -109,7 +109,6 @@ static NODISCARD error create_format_context(AVFormatContext **const format_cont
   error err = eok();
   AVFormatContext *ctx = NULL;
   unsigned char *buffer = NULL;
-  size_t buffer_size = opt->buffer_size ? opt->buffer_size : 8126;
 
 #if USE_FILE_MAPPING
   struct mappedfile *file = NULL;
@@ -150,12 +149,12 @@ static NODISCARD error create_format_context(AVFormatContext **const format_cont
   *file = (struct mappedfile){
       .mp = mp,
   };
-  buffer = av_malloc(buffer_size);
+  buffer = av_malloc(opt->buffer_size);
   if (!buffer) {
     err = emsg(err_type_generic, err_fail, &native_unmanaged_const(NSTR("av_malloc failed")));
     goto cleanup;
   }
-  ctx->pb = avio_alloc_context(buffer, (int)buffer_size, 0, file, w32read, NULL, w32seek);
+  ctx->pb = avio_alloc_context(buffer, (int)opt->buffer_size, 0, file, w32read, NULL, w32seek);
   if (!ctx->pb) {
     err = emsg(err_type_generic, err_fail, &native_unmanaged_const(NSTR("avio_alloc_context failed")));
     goto cleanup;
