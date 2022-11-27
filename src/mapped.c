@@ -2,6 +2,8 @@
 
 #include "ovutil/win32.h"
 
+#define ENABLE_BENCHMARK 0
+
 struct mapped {
   HANDLE file;
   HANDLE map;
@@ -17,6 +19,25 @@ static size_t const mapping_size = 32 * 1024 * 1024;
 
 static inline size_t szmin(size_t const a, size_t const b) { return a > b ? b : a; }
 
+#if ENABLE_BENCHMARK
+static double get_freq(void) {
+  static double freq = 0.;
+  if (freq > 0.) {
+    return freq;
+  }
+  LARGE_INTEGER f;
+  QueryPerformanceFrequency(&f);
+  freq = (double)(f.QuadPart);
+  return freq;
+}
+
+static double now(void) {
+  LARGE_INTEGER c;
+  QueryPerformanceCounter(&c);
+  return (double)(c.QuadPart) / get_freq();
+}
+#endif
+
 int mapped_read(struct mapped *const mp, void *const buf, int const buf_size) {
   if (!mp || !buf || !buf_size) {
     return -EINVAL;
@@ -26,6 +47,9 @@ int mapped_read(struct mapped *const mp, void *const buf, int const buf_size) {
     read_size = (int)(mp->total_size - mp->pos);
   }
   if ((mp->pos < mp->mapped_base) || ((mp->pos + (int64_t)read_size) > (mp->mapped_base + (int64_t)mp->mapped_size))) {
+#if ENABLE_BENCHMARK
+    double start = now();
+#endif
     SYSTEM_INFO si = {0};
     GetSystemInfo(&si);
     int64_t const block_size = (int64_t)si.dwAllocationGranularity;
@@ -44,10 +68,23 @@ int mapped_read(struct mapped *const mp, void *const buf, int const buf_size) {
     mp->ptr = ptr;
     mp->mapped_base = base.QuadPart;
     mp->mapped_size = mapped_size;
+#if ENABLE_BENCHMARK
+    char s[256];
+    wsprintfA(s, "remapping: %dmsec", (int)((now() - start) * 1000));
+    OutputDebugStringA(s);
+#endif
   }
+#if ENABLE_BENCHMARK
+  double start = now();
+#endif
   char *ptr = mp->ptr;
   memcpy(buf, ptr + (size_t)(mp->pos - mp->mapped_base), (size_t)read_size);
   mp->pos += read_size;
+#if ENABLE_BENCHMARK
+  char s[256];
+  wsprintfA(s, "memcpy: %dmsec %dbytes", (int)((now() - start) * 1000), read_size);
+  OutputDebugStringA(s);
+#endif
   return read_size;
 }
 
