@@ -23,6 +23,8 @@ enum indexer_state {
 
 struct audioidx {
   struct wstr filepath;
+  void *handle;
+
   struct hmap ptsmap;
   mtx_t mtx;
   cnd_t cnd;
@@ -44,6 +46,7 @@ static int indexer(void *userdata) {
   error err = ffmpeg_open(&fs,
                           &(struct ffmpeg_open_options){
                               .filepath = ip->filepath.ptr,
+                              .handle = ip->handle,
                               .media_type = AVMEDIA_TYPE_AUDIO,
                           });
   if (efailed(err)) {
@@ -138,10 +141,8 @@ cleanup:
   return 0;
 }
 
-NODISCARD error audioidx_create(struct audioidx **const ipp,
-                                wchar_t const *const filepath,
-                                int64_t const video_start_time) {
-  if (!ipp || *ipp || !filepath) {
+NODISCARD error audioidx_create(struct audioidx **const ipp, struct audioidx_create_options const *const opt) {
+  if (!ipp || *ipp || !opt || (!opt->filepath && (opt->handle == NULL || opt->handle == INVALID_HANDLE_VALUE))) {
     return errg(err_invalid_arugment);
   }
   error err = mem(ipp, 1, sizeof(struct audioidx));
@@ -151,7 +152,8 @@ NODISCARD error audioidx_create(struct audioidx **const ipp,
   }
   struct audioidx *ip = *ipp;
   *ip = (struct audioidx){
-      .video_start_time = video_start_time,
+      .handle = opt->handle,
+      .video_start_time = opt->video_start_time,
       .indexer_state = is_stop,
   };
   mtx_init(&ip->mtx, mtx_plain | mtx_recursive);
@@ -162,10 +164,12 @@ NODISCARD error audioidx_create(struct audioidx **const ipp,
     err = ethru(err);
     goto cleanup;
   }
-  err = scpy(&ip->filepath, filepath);
-  if (efailed(err)) {
-    err = ethru(err);
-    goto cleanup;
+  if (opt->filepath) {
+    err = scpy(&ip->filepath, opt->filepath);
+    if (efailed(err)) {
+      err = ethru(err);
+      goto cleanup;
+    }
   }
 cleanup:
   if (efailed(err)) {

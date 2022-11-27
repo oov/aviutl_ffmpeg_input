@@ -21,6 +21,7 @@ enum video_format_scaling_algorithm {
 
 struct video_options {
   wchar_t const *filepath;
+  void *handle;
   char const *preferred_decoders;
   enum video_format_scaling_algorithm scaling;
 };

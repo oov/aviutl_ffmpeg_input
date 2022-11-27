@@ -12,6 +12,7 @@
 #include "video.h"
 
 struct file {
+  HANDLE file;
   struct video *v;
   struct audio *a;
   bool invert_phase;
@@ -64,6 +65,10 @@ static BOOL ffmpeg_input_close(INPUT_HANDLE ih) {
   if (fp) {
     video_destroy(&fp->v);
     audio_destroy(&fp->a);
+    if (fp->file != INVALID_HANDLE_VALUE) {
+      CloseHandle(fp->file);
+      fp->file = INVALID_HANDLE_VALUE;
+    }
     ereport(mem_free(&fp));
   }
   return TRUE;
@@ -100,6 +105,7 @@ static INPUT_HANDLE ffmpeg_input_open(char *filepath) {
     return NULL;
   }
   error err = eok();
+  HANDLE file = INVALID_HANDLE_VALUE;
   struct config *config = NULL;
   struct file *fp = NULL;
   struct video *v = NULL;
@@ -126,10 +132,15 @@ static INPUT_HANDLE ffmpeg_input_open(char *filepath) {
     err = ethru(err);
     goto cleanup;
   }
+  file = CreateFileW(ws.ptr, GENERIC_READ, FILE_SHARE_READ, NULL, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL);
+  if (file == INVALID_HANDLE_VALUE) {
+    err = errhr(HRESULT_FROM_WIN32(GetLastError()));
+    goto cleanup;
+  }
   err = video_create(&v,
                      &vi,
                      &(struct video_options){
-                         .filepath = ws.ptr,
+                         .handle = file,
                          .preferred_decoders = config_get_preferred_decoders(config),
                          .scaling = config_get_scaling(config),
                      });
@@ -140,7 +151,7 @@ static INPUT_HANDLE ffmpeg_input_open(char *filepath) {
   err = audio_create(&a,
                      &ai,
                      &(struct audio_options){
-                         .filepath = ws.ptr,
+                         .handle = file,
                          .preferred_decoders = config_get_preferred_decoders(config),
                          .video_start_time = video_get_start_time(v),
                      });
@@ -159,6 +170,7 @@ static INPUT_HANDLE ffmpeg_input_open(char *filepath) {
     goto cleanup;
   }
   *fp = (struct file){
+      .file = file,
       .v = v,
       .a = a,
       .invert_phase = config_get_invert_phase(config),
@@ -209,6 +221,10 @@ cleanup:
     }
     if (v) {
       video_destroy(&v);
+    }
+    if (file != INVALID_HANDLE_VALUE) {
+      CloseHandle(file);
+      file = INVALID_HANDLE_VALUE;
     }
     ereport(err);
     return NULL;

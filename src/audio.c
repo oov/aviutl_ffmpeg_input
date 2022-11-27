@@ -251,7 +251,7 @@ void audio_destroy(struct audio **const app) {
 NODISCARD error audio_create(struct audio **const app,
                              struct info_audio *const ai,
                              struct audio_options const *const opt) {
-  if (!app || *app || !ai || !opt || !opt->filepath) {
+  if (!app || *app || !ai || !opt || (!opt->filepath && (opt->handle == NULL || opt->handle == INVALID_HANDLE_VALUE))) {
     return errg(err_invalid_arugment);
   }
   struct audio *fp = NULL;
@@ -267,6 +267,7 @@ NODISCARD error audio_create(struct audio **const app,
   err = ffmpeg_open(&fp->ffmpeg,
                     &(struct ffmpeg_open_options){
                         .filepath = opt->filepath,
+                        .handle = opt->handle,
                         .media_type = AVMEDIA_TYPE_AUDIO,
                         .preferred_decoders = opt->preferred_decoders,
                     });
@@ -283,7 +284,12 @@ NODISCARD error audio_create(struct audio **const app,
   }
 
   if (opt->use_audio_index) {
-    err = audioidx_create(&fp->idx, opt->filepath, opt->video_start_time);
+    err = audioidx_create(&fp->idx,
+                          &(struct audioidx_create_options){
+                              .filepath = opt->filepath,
+                              .handle = opt->handle,
+                              .video_start_time = opt->video_start_time,
+                          });
     if (efailed(err)) {
       err = ethru(err);
       goto cleanup;

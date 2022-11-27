@@ -7,6 +7,7 @@ struct audio;
 
 struct audio_options {
   wchar_t const *filepath;
+  void *handle;
   char const *preferred_decoders;
   int64_t video_start_time;
   bool use_audio_index;

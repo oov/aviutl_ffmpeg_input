@@ -234,7 +234,7 @@ void video_destroy(struct video **const vpp) {
 NODISCARD error video_create(struct video **const vpp,
                              struct info_video *const vi,
                              struct video_options const *const opt) {
-  if (!vpp || *vpp || !vi || !opt || !opt->filepath) {
+  if (!vpp || *vpp || !vi || !opt || (!opt->filepath && (opt->handle == NULL || opt->handle == INVALID_HANDLE_VALUE))) {
     return errg(err_invalid_arugment);
   }
   struct video *fp = NULL;
@@ -247,6 +247,7 @@ NODISCARD error video_create(struct video **const vpp,
   err = ffmpeg_open(&fp->ffmpeg,
                     &(struct ffmpeg_open_options){
                         .filepath = opt->filepath,
+                        .handle = opt->handle,
                         .media_type = AVMEDIA_TYPE_VIDEO,
                         .preferred_decoders = opt->preferred_decoders,
                     });
