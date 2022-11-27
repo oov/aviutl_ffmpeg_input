@@ -48,6 +48,7 @@ static int64_t w32seek(void *opaque, int64_t offset, int whence) {
 #else
 struct w32file {
   HANDLE h;
+  bool close_handle;
 };
 
 static int w32read(void *opaque, uint8_t *buf, int buf_size) {
@@ -93,19 +94,30 @@ static int64_t w32seek(void *opaque, int64_t offset, int whence) {
 }
 #endif
 
-static NODISCARD error create_format_context(wchar_t const *const filepath,
-                                             size_t const buffer_size,
-                                             AVFormatContext **const format_context) {
+struct create_format_context_options {
+  wchar_t const *filepath;
+  void *handle;
+  size_t buffer_size;
+};
+
+static NODISCARD error create_format_context(AVFormatContext **const format_context,
+                                             struct create_format_context_options *const opt) {
+  if (!format_context || *format_context || !opt ||
+      (!opt->filepath && (opt->handle == NULL || opt->handle == INVALID_HANDLE_VALUE))) {
+    return errg(err_invalid_arugment);
+  }
   error err = eok();
   AVFormatContext *ctx = NULL;
   unsigned char *buffer = NULL;
+  size_t buffer_size = opt->buffer_size ? opt->buffer_size : 8126;
 
 #if USE_FILE_MAPPING
   struct mappedfile *file = NULL;
   struct mapped *mp = NULL;
   err = mapped_create(&mp,
                       &(struct mapped_options){
-                          .filepath = filepath,
+                          .filepath = opt->filepath,
+                          .handle = opt->handle,
                       });
   if (efailed(err)) {
     err = ethru(err);
@@ -114,10 +126,12 @@ static NODISCARD error create_format_context(wchar_t const *const filepath,
 #else
   struct w32file *file = NULL;
   HANDLE h = INVALID_HANDLE_VALUE;
-  h = CreateFileW(filepath, GENERIC_READ, FILE_SHARE_READ, NULL, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL);
-  if (h == INVALID_HANDLE_VALUE) {
-    err = errhr(HRESULT_FROM_WIN32(GetLastError()));
-    goto cleanup;
+  if (opt->filepath) {
+    h = CreateFileW(opt->filepath, GENERIC_READ, FILE_SHARE_READ, NULL, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL);
+    if (h == INVALID_HANDLE_VALUE) {
+      err = errhr(HRESULT_FROM_WIN32(GetLastError()));
+      goto cleanup;
+    }
   }
 #endif
 
@@ -153,9 +167,14 @@ static NODISCARD error create_format_context(wchar_t const *const filepath,
     err = emsg(err_type_generic, err_fail, &native_unmanaged_const(NSTR("av_malloc failed")));
     goto cleanup;
   }
-  *file = (struct w32file){
-      .h = h,
-  };
+  *file = (struct w32file){0};
+  if (h != INVALID_HANDLE_VALUE) {
+    file->h = h;
+    file->close_handle = true;
+  } else {
+    file->h = opt->handle;
+  }
+
   buffer = av_malloc(buffer_size);
   if (!buffer) {
     err = emsg(err_type_generic, err_fail, &native_unmanaged_const(NSTR("av_malloc failed")));
@@ -202,7 +221,9 @@ static void destroy_format_context(AVFormatContext **const format_context) {
     mapped_destroy(&file->mp);
 #else
     struct w32file *file = (*format_context)->pb->opaque;
-    CloseHandle(file->h);
+    if (file->close_handle) {
+      CloseHandle(file->h);
+    }
 #endif
     av_freep(&(*format_context)->pb->opaque);
   }
@@ -350,7 +371,11 @@ NODISCARD error ffmpeg_open(struct ffmpeg_stream *const fs,
   AVCodecContext *cctx = NULL;
   AVFrame *frame = NULL;
   AVPacket *packet = NULL;
-  error err = create_format_context(filepath, 8126, &fctx);
+  error err = create_format_context(&fctx,
+                                    &(struct create_format_context_options){
+                                        .filepath = filepath,
+                                        .buffer_size = 8126,
+                                    });
   if (efailed(err)) {
     err = ethru(err);
     goto cleanup;
