@@ -248,6 +248,9 @@ static INPUT_HANDLE ffmpeg_input_open(char *filepath) {
 
 cleanup:
   ereport(sfree(&ws));
+  // In AviUtl's extended editing, video and audio are read as separate objects.
+  // As a result, two video and two audio streams are retained.
+  // To avoid this, I release both streams at this time and reopen them when a read request comes in.
   audio_destroy(&a);
   video_destroy(&v);
   if (efailed(err)) {
