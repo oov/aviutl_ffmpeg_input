@@ -6,9 +6,9 @@
 
 #ifndef NDEBUG
 #  include <ovprintf.h>
-#  include <ovutil/win32.h>
 #endif
 
+#include <ovutil/win32.h>
 #include <stdatomic.h>
 
 struct item {

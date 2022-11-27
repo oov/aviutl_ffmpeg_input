@@ -2,8 +2,9 @@
 
 #ifndef NDEBUG
 #  include <ovprintf.h>
-#  include <ovutil/win32.h>
 #endif
+
+#include <ovutil/win32.h>
 
 #include "ffmpeg.h"
 
@@ -17,7 +18,7 @@ struct video {
   bool yuy2;
 };
 
-static inline void get_info(struct video const *const v, struct info_video *const vi) {
+void video_get_info(struct video const *const v, struct info_video *const vi) {
   vi->width = v->ffmpeg.cctx->width;
   vi->height = v->ffmpeg.cctx->height;
   vi->bit_depth = v->yuy2 ? 16 : 24;
@@ -231,10 +232,8 @@ void video_destroy(struct video **const vpp) {
   ereport(mem_free(vpp));
 }
 
-NODISCARD error video_create(struct video **const vpp,
-                             struct info_video *const vi,
-                             struct video_options const *const opt) {
-  if (!vpp || *vpp || !vi || !opt || (!opt->filepath && (opt->handle == NULL || opt->handle == INVALID_HANDLE_VALUE))) {
+NODISCARD error video_create(struct video **const vpp, struct video_options const *const opt) {
+  if (!vpp || *vpp || !opt || (!opt->filepath && (opt->handle == NULL || opt->handle == INVALID_HANDLE_VALUE))) {
     return errg(err_invalid_arugment);
   }
   struct video *fp = NULL;
@@ -265,17 +264,15 @@ NODISCARD error video_create(struct video **const vpp,
     err = emsg(err_type_generic, err_fail, &native_unmanaged_const(NSTR("sws_getContext failed")));
     goto cleanup;
   }
+  *vpp = fp;
 cleanup:
   if (efailed(err)) {
     video_destroy(&fp);
-  } else {
-    *vpp = fp;
-    get_info(fp, vi);
   }
   return err;
 }
 
-int64_t video_get_start_time(struct video *const v) {
+int64_t video_get_start_time(struct video const *const v) {
   if (!v) {
     return AV_NOPTS_VALUE;
   }

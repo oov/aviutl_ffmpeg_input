@@ -13,12 +13,13 @@
 
 struct file {
   HANDLE file;
+  struct config *config;
   struct video *v;
   struct audio *a;
-  bool invert_phase;
   BITMAPINFOHEADER video_format;
   WAVEFORMATEX audio_format;
   INPUT_INFO info;
+  int64_t video_start_time;
 };
 
 static bool ffmpeg_loaded = false;
@@ -26,13 +27,52 @@ static bool ffmpeg_loaded = false;
 static BOOL ffmpeg_input_info_get(INPUT_HANDLE ih, INPUT_INFO *iip) {
   struct file *fp = (void *)ih;
   *iip = fp->info;
-  return fp->v || fp->a;
+  return fp->video_format.biWidth || fp->audio_format.nSamplesPerSec;
+}
+
+static NODISCARD error create_video(struct file *fp, struct video **v) {
+  error err = video_create(v,
+                           &(struct video_options){
+                               .handle = fp->file,
+                               .preferred_decoders = config_get_preferred_decoders(fp->config),
+                               .scaling = config_get_scaling(fp->config),
+                           });
+  if (efailed(err)) {
+    err = ethru(err);
+    goto cleanup;
+  }
+cleanup:
+  return err;
+}
+
+static NODISCARD error create_audio(struct file *fp, struct audio **a) {
+  error err = audio_create(a,
+                           &(struct audio_options){
+                               .handle = fp->file,
+                               .preferred_decoders = config_get_preferred_decoders(fp->config),
+                               .video_start_time = fp->video_start_time,
+                               .use_audio_index = config_get_use_audio_index(fp->config),
+                           });
+  if (efailed(err)) {
+    err = ethru(err);
+    goto cleanup;
+  }
+cleanup:
+  return err;
 }
 
 static int ffmpeg_input_read_video(INPUT_HANDLE ih, int frame, void *buf) {
   struct file *fp = (void *)ih;
+  error err = eok();
+  if (!fp->v) {
+    err = create_video(fp, &fp->v);
+    if (efailed(err)) {
+      ereport(err);
+      return 0;
+    }
+  }
   size_t written = 0;
-  error err = video_read(fp->v, frame, buf, &written);
+  err = video_read(fp->v, frame, buf, &written);
   if (efailed(err)) {
     ereport(err);
     return 0;
@@ -42,13 +82,21 @@ static int ffmpeg_input_read_video(INPUT_HANDLE ih, int frame, void *buf) {
 
 static int ffmpeg_input_read_audio(INPUT_HANDLE ih, int start, int length, void *buf) {
   struct file *fp = (void *)ih;
+  error err = eok();
   int written = 0;
-  error err = audio_read(fp->a, (int64_t)start, length, buf, &written);
+  if (!fp->a) {
+    err = create_audio(fp, &fp->a);
+    if (efailed(err)) {
+      ereport(err);
+      return 0;
+    }
+  }
+  err = audio_read(fp->a, (int64_t)start, length, buf, &written);
   if (efailed(err)) {
     ereport(err);
     return 0;
   }
-  if (fp->invert_phase) {
+  if (config_get_invert_phase(fp->config)) {
     int16_t *w = buf;
     for (int i = 0; i < written; ++i) {
       *w = -*w;
@@ -69,6 +117,7 @@ static BOOL ffmpeg_input_close(INPUT_HANDLE ih) {
       CloseHandle(fp->file);
       fp->file = INVALID_HANDLE_VALUE;
     }
+    config_destroy(&fp->config);
     ereport(mem_free(&fp));
   }
   return TRUE;
@@ -137,33 +186,6 @@ static INPUT_HANDLE ffmpeg_input_open(char *filepath) {
     err = errhr(HRESULT_FROM_WIN32(GetLastError()));
     goto cleanup;
   }
-  err = video_create(&v,
-                     &vi,
-                     &(struct video_options){
-                         .handle = file,
-                         .preferred_decoders = config_get_preferred_decoders(config),
-                         .scaling = config_get_scaling(config),
-                     });
-  if (efailed(err)) {
-    err = ethru(err);
-    goto cleanup;
-  }
-  err = audio_create(&a,
-                     &ai,
-                     &(struct audio_options){
-                         .handle = file,
-                         .preferred_decoders = config_get_preferred_decoders(config),
-                         .video_start_time = video_get_start_time(v),
-                     });
-  if (efailed(err)) {
-    err = ethru(err);
-    goto cleanup;
-  }
-  if (!v && !a) {
-    err = errg(err_fail);
-    goto cleanup;
-  }
-
   err = mem(&fp, 1, sizeof(struct file));
   if (efailed(err)) {
     err = ethru(err);
@@ -171,10 +193,27 @@ static INPUT_HANDLE ffmpeg_input_open(char *filepath) {
   }
   *fp = (struct file){
       .file = file,
-      .v = v,
-      .a = a,
-      .invert_phase = config_get_invert_phase(config),
+      .config = config,
   };
+  err = create_video(fp, &v);
+  if (efailed(err)) {
+    ereport(err);
+  }
+  if (v) {
+    video_get_info(v, &vi);
+    fp->video_start_time = video_get_start_time(v);
+  }
+  err = create_audio(fp, &a);
+  if (efailed(err)) {
+    ereport(err);
+  }
+  if (a) {
+    audio_get_info(a, &ai);
+  }
+  if (!v && !a) {
+    err = errg(err_fail);
+    goto cleanup;
+  }
   INPUT_INFO *ii = &fp->info;
   if (v) {
     fp->video_format = (BITMAPINFOHEADER){
@@ -209,22 +248,18 @@ static INPUT_HANDLE ffmpeg_input_open(char *filepath) {
 
 cleanup:
   ereport(sfree(&ws));
-  if (config) {
-    config_destroy(&config);
-  }
+  audio_destroy(&a);
+  video_destroy(&v);
   if (efailed(err)) {
     if (fp) {
       ereport(mem_free(&fp));
     }
-    if (a) {
-      audio_destroy(&a);
-    }
-    if (v) {
-      video_destroy(&v);
-    }
     if (file != INVALID_HANDLE_VALUE) {
       CloseHandle(file);
       file = INVALID_HANDLE_VALUE;
+    }
+    if (config) {
+      config_destroy(&config);
     }
     ereport(err);
     return NULL;

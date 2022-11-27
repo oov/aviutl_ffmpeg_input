@@ -2,11 +2,12 @@
 
 #ifndef NDEBUG
 #  include <ovprintf.h>
-#  include <ovutil/win32.h>
 #endif
 
 #include "audioidx.h"
 #include "ffmpeg.h"
+
+#include <ovutil/win32.h>
 
 typedef int16_t sample_t;
 static int const g_channels = 2;
@@ -30,7 +31,7 @@ struct audio {
   int64_t swr_buf_sample_pos;
 };
 
-static inline void get_info(struct audio const *const a, struct info_audio *const ai) {
+void audio_get_info(struct audio const *const a, struct info_audio *const ai) {
   ai->sample_rate = a->ffmpeg.cctx->sample_rate;
   ai->channels = g_channels;
   ai->bit_depth = sizeof(sample_t) * 8;
@@ -248,10 +249,8 @@ void audio_destroy(struct audio **const app) {
   ereport(mem_free(app));
 }
 
-NODISCARD error audio_create(struct audio **const app,
-                             struct info_audio *const ai,
-                             struct audio_options const *const opt) {
-  if (!app || *app || !ai || !opt || (!opt->filepath && (opt->handle == NULL || opt->handle == INVALID_HANDLE_VALUE))) {
+NODISCARD error audio_create(struct audio **const app, struct audio_options const *const opt) {
+  if (!app || *app || !opt || (!opt->filepath && (opt->handle == NULL || opt->handle == INVALID_HANDLE_VALUE))) {
     return errg(err_invalid_arugment);
   }
   struct audio *fp = NULL;
@@ -323,18 +322,15 @@ NODISCARD error audio_create(struct audio **const app,
     err = errffmpeg(r);
     goto cleanup;
   }
-
+  *app = fp;
 cleanup:
   if (efailed(err)) {
     audio_destroy(&fp);
-  } else {
-    *app = fp;
-    get_info(fp, ai);
   }
   return err;
 }
 
-int64_t audio_get_start_time(struct audio *const a) {
+int64_t audio_get_start_time(struct audio const *const a) {
   if (!a || !a->ffmpeg.stream) {
     return AV_NOPTS_VALUE;
   }
