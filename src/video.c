@@ -244,7 +244,12 @@ NODISCARD error video_create(struct video **const vpp,
     return NULL;
   }
   *fp = (struct video){0};
-  err = ffmpeg_open(&fp->ffmpeg, opt->filepath, AVMEDIA_TYPE_VIDEO, opt->preferred_decoders);
+  err = ffmpeg_open(&fp->ffmpeg,
+                    &(struct ffmpeg_open_options){
+                        .filepath = opt->filepath,
+                        .media_type = AVMEDIA_TYPE_VIDEO,
+                        .preferred_decoders = opt->preferred_decoders,
+                    });
   if (efailed(err)) {
     err = ethru(err);
     goto cleanup;

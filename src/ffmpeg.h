@@ -51,10 +51,15 @@ struct ffmpeg_stream {
   AVPacket *packet;
 };
 
-NODISCARD error ffmpeg_open(struct ffmpeg_stream *const fs,
-                            wchar_t const *const filepath,
-                            enum AVMediaType const media_type,
-                            char const *const preferred_decoders);
+struct ffmpeg_open_options {
+  wchar_t const *filepath;
+  void *handle;
+  size_t buffer_size;
+  enum AVMediaType media_type;
+  char const *preferred_decoders;
+};
+
+NODISCARD error ffmpeg_open(struct ffmpeg_stream *const fs, struct ffmpeg_open_options const *const opt);
 void ffmpeg_close(struct ffmpeg_stream *const fs);
 
 NODISCARD error ffmpeg_seek(struct ffmpeg_stream *const fs, int64_t const timestamp_in_stream_time_base);

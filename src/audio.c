@@ -263,7 +263,13 @@ NODISCARD error audio_create(struct audio **const app,
   *fp = (struct audio){
       .video_start_time = opt->video_start_time,
   };
-  err = ffmpeg_open(&fp->ffmpeg, opt->filepath, AVMEDIA_TYPE_AUDIO, opt->preferred_decoders);
+
+  err = ffmpeg_open(&fp->ffmpeg,
+                    &(struct ffmpeg_open_options){
+                        .filepath = opt->filepath,
+                        .media_type = AVMEDIA_TYPE_AUDIO,
+                        .preferred_decoders = opt->preferred_decoders,
+                    });
   if (efailed(err)) {
     err = ethru(err);
     goto cleanup;

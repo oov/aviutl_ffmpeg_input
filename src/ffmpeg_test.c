@@ -71,7 +71,11 @@ static NODISCARD error open_stream(struct ffmpeg_stream *fs, wchar_t const *cons
     err = ethru(err);
     goto cleanup;
   }
-  err = ffmpeg_open(fs, ws.ptr, AVMEDIA_TYPE_VIDEO, NULL);
+  err = ffmpeg_open(fs,
+                    &(struct ffmpeg_open_options){
+                        .filepath = ws.ptr,
+                        .media_type = AVMEDIA_TYPE_VIDEO,
+                    });
   if (efailed(err)) {
     err = ethru(err);
     goto cleanup;

@@ -41,7 +41,11 @@ static int indexer(void *userdata) {
   struct indexer_context *ictx = userdata;
   struct audioidx *ip = ictx->ip;
   struct ffmpeg_stream fs = {0};
-  error err = ffmpeg_open(&fs, ip->filepath.ptr, AVMEDIA_TYPE_AUDIO, NULL);
+  error err = ffmpeg_open(&fs,
+                          &(struct ffmpeg_open_options){
+                              .filepath = ip->filepath.ptr,
+                              .media_type = AVMEDIA_TYPE_AUDIO,
+                          });
   if (efailed(err)) {
     err = ethru(err);
     goto cleanup;

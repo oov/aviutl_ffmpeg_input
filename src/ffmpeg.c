@@ -358,11 +358,8 @@ void ffmpeg_close(struct ffmpeg_stream *const fs) {
   }
 }
 
-NODISCARD error ffmpeg_open(struct ffmpeg_stream *const fs,
-                            wchar_t const *const filepath,
-                            enum AVMediaType const media_type,
-                            char const *const preferred_decoders) {
-  if (!filepath) {
+NODISCARD error ffmpeg_open(struct ffmpeg_stream *const fs, struct ffmpeg_open_options const *const opt) {
+  if (!opt || (!opt->filepath && (opt->handle == NULL || opt->handle == INVALID_HANDLE_VALUE))) {
     return errg(err_invalid_arugment);
   }
   AVFormatContext *fctx = NULL;
@@ -373,8 +370,9 @@ NODISCARD error ffmpeg_open(struct ffmpeg_stream *const fs,
   AVPacket *packet = NULL;
   error err = create_format_context(&fctx,
                                     &(struct create_format_context_options){
-                                        .filepath = filepath,
-                                        .buffer_size = 8126,
+                                        .filepath = opt->filepath,
+                                        .handle = opt->handle,
+                                        .buffer_size = opt->buffer_size,
                                     });
   if (efailed(err)) {
     err = ethru(err);
@@ -392,7 +390,7 @@ NODISCARD error ffmpeg_open(struct ffmpeg_stream *const fs,
   }
 
   for (unsigned int i = 0; !stream && i < fctx->nb_streams; ++i) {
-    if (fctx->streams[i]->codecpar->codec_type == media_type) {
+    if (fctx->streams[i]->codecpar->codec_type == opt->media_type) {
       stream = fctx->streams[i];
       break;
     }
@@ -406,14 +404,14 @@ NODISCARD error ffmpeg_open(struct ffmpeg_stream *const fs,
     err = emsg(err_type_generic, err_fail, &native_unmanaged_const(NSTR("decoder not found")));
     goto cleanup;
   }
-  err = open_preferred_codec(preferred_decoders, orig_codec, stream->codecpar, NULL, &codec, &cctx);
+  err = open_preferred_codec(opt->preferred_decoders, orig_codec, stream->codecpar, NULL, &codec, &cctx);
   if (efailed(err)) {
     err = ethru(err);
     goto cleanup;
   }
 
   // workaround for h264_qsv
-  if (media_type == AVMEDIA_TYPE_VIDEO && strcmp(codec->name, "h264_qsv") == 0 && cctx->pix_fmt == 0) {
+  if (opt->media_type == AVMEDIA_TYPE_VIDEO && strcmp(codec->name, "h264_qsv") == 0 && cctx->pix_fmt == 0) {
     // It seems that the correct format is not set, so set it manually.
     cctx->pix_fmt = AV_PIX_FMT_NV12;
   }
