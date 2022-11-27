@@ -93,7 +93,7 @@ static int64_t w32seek(void *opaque, int64_t offset, int whence) {
 }
 #endif
 
-static NODISCARD error create_format_context(wchar_t const *const filename,
+static NODISCARD error create_format_context(wchar_t const *const filepath,
                                              size_t const buffer_size,
                                              AVFormatContext **const format_context) {
   error err = eok();
@@ -103,7 +103,10 @@ static NODISCARD error create_format_context(wchar_t const *const filename,
 #if USE_FILE_MAPPING
   struct mappedfile *file = NULL;
   struct mapped *mp = NULL;
-  err = mapped_create(&mp, filename);
+  err = mapped_create(&mp,
+                      &(struct mapped_options){
+                          .filepath = filepath,
+                      });
   if (efailed(err)) {
     err = ethru(err);
     goto cleanup;
@@ -111,7 +114,7 @@ static NODISCARD error create_format_context(wchar_t const *const filename,
 #else
   struct w32file *file = NULL;
   HANDLE h = INVALID_HANDLE_VALUE;
-  h = CreateFileW(filename, GENERIC_READ, FILE_SHARE_READ, NULL, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL);
+  h = CreateFileW(filepath, GENERIC_READ, FILE_SHARE_READ, NULL, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL);
   if (h == INVALID_HANDLE_VALUE) {
     err = errhr(HRESULT_FROM_WIN32(GetLastError()));
     goto cleanup;

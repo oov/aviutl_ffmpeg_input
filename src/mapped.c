@@ -10,6 +10,7 @@ struct mapped {
   int64_t mapped_base;
   int64_t pos;
   int64_t total_size;
+  bool close_handle;
 };
 
 static size_t const mapping_size = 32 * 1024 * 1024;
@@ -95,17 +96,18 @@ void mapped_destroy(struct mapped **const mpp) {
     CloseHandle(mp->map);
     mp->map = NULL;
   }
-  if (mp->file != INVALID_HANDLE_VALUE) {
+  if (mp->file != INVALID_HANDLE_VALUE && mp->close_handle) {
     CloseHandle(mp->file);
-    mp->file = INVALID_HANDLE_VALUE;
   }
+  mp->file = INVALID_HANDLE_VALUE;
   ereport(mem_free(mpp));
 }
 
-NODISCARD error mapped_create(struct mapped **const mpp, wchar_t const *const filepath) {
-  if (!mpp || *mpp || !filepath) {
+NODISCARD error mapped_create(struct mapped **const mpp, struct mapped_options const *const opt) {
+  if (!mpp || *mpp || !opt || (!opt->filepath && (opt->handle == NULL || opt->handle == INVALID_HANDLE_VALUE))) {
     return errg(err_invalid_arugment);
   }
+  HANDLE file = INVALID_HANDLE_VALUE;
   struct mapped *mp = NULL;
   error err = mem(mpp, 1, sizeof(struct mapped));
   if (efailed(err)) {
@@ -113,13 +115,16 @@ NODISCARD error mapped_create(struct mapped **const mpp, wchar_t const *const fi
     goto cleanup;
   }
   mp = *mpp;
-  *mp = (struct mapped){
-      .file = INVALID_HANDLE_VALUE,
-  };
-  mp->file = CreateFileW(filepath, GENERIC_READ, FILE_SHARE_READ, NULL, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL);
-  if (mp->file == INVALID_HANDLE_VALUE) {
-    err = errhr(HRESULT_FROM_WIN32(GetLastError()));
-    goto cleanup;
+  *mp = (struct mapped){0};
+  if (opt->filepath) {
+    file = CreateFileW(opt->filepath, GENERIC_READ, FILE_SHARE_READ, NULL, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL);
+    if (file == INVALID_HANDLE_VALUE) {
+      err = errhr(HRESULT_FROM_WIN32(GetLastError()));
+      goto cleanup;
+    }
+    mp->file = file;
+  } else {
+    mp->file = opt->handle;
   }
   LARGE_INTEGER sz;
   if (!GetFileSizeEx(mp->file, &sz)) {
@@ -132,9 +137,16 @@ NODISCARD error mapped_create(struct mapped **const mpp, wchar_t const *const fi
     err = errhr(HRESULT_FROM_WIN32(GetLastError()));
     goto cleanup;
   }
+  if (file != INVALID_HANDLE_VALUE) {
+    mp->close_handle = true;
+  }
 cleanup:
   if (efailed(err)) {
     mapped_destroy(mpp);
+    if (file != INVALID_HANDLE_VALUE) {
+      CloseHandle(file);
+      file = INVALID_HANDLE_VALUE;
+    }
   }
   return err;
 }
