@@ -15,9 +15,9 @@ struct mapped {
   bool close_handle;
 };
 
-static size_t const mapping_size = 32 * 1024 * 1024;
+static int64_t const mapping_size = 32 * 1024 * 1024;
 
-static inline size_t szmin(size_t const a, size_t const b) { return a > b ? b : a; }
+static inline int64_t i64min(int64_t const a, int64_t const b) { return a > b ? b : a; }
 
 #if ENABLE_BENCHMARK
 static double get_freq(void) {
@@ -56,7 +56,7 @@ int mapped_read(struct mapped *const mp, void *const buf, int const buf_size) {
     LARGE_INTEGER base = {
         .QuadPart = (mp->pos / block_size) * block_size,
     };
-    size_t const mapped_size = szmin((size_t)(mp->total_size - base.QuadPart), mapping_size);
+    size_t const mapped_size = (size_t)i64min(mp->total_size - base.QuadPart, mapping_size);
     void *ptr = MapViewOfFile(mp->map, FILE_MAP_READ, (DWORD)base.HighPart, base.LowPart, mapped_size);
     if (!ptr) {
       ereport(errhr(HRESULT_FROM_WIN32(GetLastError())));
