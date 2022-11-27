@@ -40,6 +40,7 @@ add_library(ffmpeg_input SHARED
   main.c
   mapped.c
   process.c
+  stream.c
   video.c
 )
 list(APPEND targets ffmpeg_input)

@@ -4,270 +4,109 @@
 #include "ovutil/str.h"
 #include "ovutil/win32.h"
 
-#include "audio.h"
 #include "config.h"
 #include "error.h"
 #include "ffmpeg.h"
+#include "stream.h"
 #include "version.h"
-#include "video.h"
-
-struct file {
-  HANDLE file;
-  struct config *config;
-  struct video *v;
-  struct audio *a;
-  BITMAPINFOHEADER video_format;
-  WAVEFORMATEX audio_format;
-  INPUT_INFO info;
-  int64_t video_start_time;
-};
 
 static bool ffmpeg_loaded = false;
 
 static BOOL ffmpeg_input_info_get(INPUT_HANDLE ih, INPUT_INFO *iip) {
-  struct file *fp = (void *)ih;
-  *iip = fp->info;
-  return fp->video_format.biWidth || fp->audio_format.nSamplesPerSec;
-}
+  struct stream *sp = (void *)ih;
 
-static NODISCARD error create_video(struct file *fp, struct video **v) {
-  error err = video_create(v,
-                           &(struct video_options){
-                               .handle = fp->file,
-                               .preferred_decoders = config_get_preferred_decoders(fp->config),
-                               .scaling = config_get_scaling(fp->config),
-                           });
-  if (efailed(err)) {
-    err = ethru(err);
-    goto cleanup;
+  static BITMAPINFOHEADER bih = {0};
+  struct info_video const *const vi = stream_get_video_info(sp);
+  if (vi->width) {
+    bih = (BITMAPINFOHEADER){
+        .biSize = sizeof(BITMAPINFOHEADER),
+        .biWidth = vi->width,
+        .biHeight = vi->height,
+        .biCompression = vi->is_rgb ? MAKEFOURCC('B', 'G', 'R', 0) : MAKEFOURCC('Y', 'U', 'Y', '2'),
+        .biBitCount = (WORD)vi->bit_depth,
+    };
+    iip->flag |= INPUT_INFO_FLAG_VIDEO | INPUT_INFO_FLAG_VIDEO_RANDOM_ACCESS;
+    iip->rate = vi->frame_rate;
+    iip->scale = vi->frame_scale;
+    iip->n = (int)vi->frames;
+    iip->format = &bih;
+    iip->format_size = (int)bih.biSize;
   }
-cleanup:
-  return err;
-}
 
-static NODISCARD error create_audio(struct file *fp, struct audio **a) {
-  error err = audio_create(a,
-                           &(struct audio_options){
-                               .handle = fp->file,
-                               .preferred_decoders = config_get_preferred_decoders(fp->config),
-                               .video_start_time = fp->video_start_time,
-                               .use_audio_index = config_get_use_audio_index(fp->config),
-                           });
-  if (efailed(err)) {
-    err = ethru(err);
-    goto cleanup;
+  static WAVEFORMATEX wfex = {0};
+  struct info_audio const *const ai = stream_get_audio_info(sp);
+  if (ai->sample_rate) {
+    wfex = (WAVEFORMATEX){
+        .wFormatTag = WAVE_FORMAT_PCM,
+        .nChannels = (WORD)ai->channels,
+        .nSamplesPerSec = (DWORD)ai->sample_rate,
+        .wBitsPerSample = (WORD)ai->bit_depth,
+        .nBlockAlign = (WORD)(ai->channels * ai->bit_depth / 8),
+        .nAvgBytesPerSec = (DWORD)(ai->sample_rate * ai->channels * ai->bit_depth / 8),
+        .cbSize = 0,
+    };
+    iip->flag |= INPUT_INFO_FLAG_AUDIO;
+    iip->audio_n = (int)ai->samples;
+    iip->audio_format = &wfex;
+    iip->audio_format_size = (int)(sizeof(WAVEFORMATEX) + wfex.cbSize);
   }
-cleanup:
-  return err;
+  return bih.biWidth || wfex.nSamplesPerSec;
 }
 
 static int ffmpeg_input_read_video(INPUT_HANDLE ih, int frame, void *buf) {
-  struct file *fp = (void *)ih;
-  error err = eok();
-  if (!fp->v) {
-    err = create_video(fp, &fp->v);
-    if (efailed(err)) {
-      ereport(err);
-      return 0;
-    }
-  }
-  size_t written = 0;
-  err = video_read(fp->v, frame, buf, &written);
+  struct stream *sp = (void *)ih;
+  size_t wr = 0;
+  error err = stream_read_video(sp, (int64_t)frame, buf, &wr);
   if (efailed(err)) {
     ereport(err);
     return 0;
   }
-  return (int)written;
+  return (int)wr;
 }
 
 static int ffmpeg_input_read_audio(INPUT_HANDLE ih, int start, int length, void *buf) {
-  struct file *fp = (void *)ih;
-  error err = eok();
-  int written = 0;
-  if (!fp->a) {
-    err = create_audio(fp, &fp->a);
-    if (efailed(err)) {
-      ereport(err);
-      return 0;
-    }
-  }
-  err = audio_read(fp->a, (int64_t)start, length, buf, &written);
+  struct stream *sp = (void *)ih;
+  int wr = 0;
+  error err = stream_read_audio(sp, (int64_t)start, (size_t)length, buf, &wr);
   if (efailed(err)) {
     ereport(err);
     return 0;
   }
-  if (config_get_invert_phase(fp->config)) {
-    int16_t *w = buf;
-    for (int i = 0; i < written; ++i) {
-      *w = -*w;
-      w++;
-      *w = -*w;
-      w++;
-    }
-  }
-  return written;
+  return (int)wr;
 }
 
 static BOOL ffmpeg_input_close(INPUT_HANDLE ih) {
-  struct file *fp = (void *)ih;
-  if (fp) {
-    video_destroy(&fp->v);
-    audio_destroy(&fp->a);
-    if (fp->file != INVALID_HANDLE_VALUE) {
-      CloseHandle(fp->file);
-      fp->file = INVALID_HANDLE_VALUE;
-    }
-    config_destroy(&fp->config);
-    ereport(mem_free(&fp));
-  }
+  struct stream *sp = (void *)ih;
+  stream_destroy(&sp);
   return TRUE;
-}
-
-static NODISCARD bool has_postfix(char *filepath) {
-  if (!filepath) {
-    return false;
-  }
-  bool r = false;
-  struct wstr ws = {0};
-  error err = from_mbcs(&str_unmanaged_const(filepath), &ws);
-  if (efailed(err)) {
-    err = ethru(err);
-    goto cleanup;
-  }
-  size_t extpos = 0;
-  err = extract_file_extension(&ws, &extpos);
-  if (efailed(err)) {
-    err = ethru(err);
-    goto cleanup;
-  }
-  ws.ptr[extpos] = L'\0';
-  ws.len = extpos;
-  r = extpos > 7 && wcsicmp(ws.ptr + extpos - 7, L"-ffmpeg") == 0;
-cleanup:
-  ereport(sfree(&ws));
-  ereport(err);
-  return r;
 }
 
 static INPUT_HANDLE ffmpeg_input_open(char *filepath) {
   if (!ffmpeg_loaded) {
     return NULL;
   }
-  error err = eok();
-  HANDLE file = INVALID_HANDLE_VALUE;
-  struct config *config = NULL;
-  struct file *fp = NULL;
-  struct video *v = NULL;
-  struct audio *a = NULL;
   struct wstr ws = {0};
-  struct info_video vi = {0};
-  struct info_audio ai = {0};
-  err = config_create(&config);
+  struct stream *sp = NULL;
+  error err = from_mbcs(&str_unmanaged_const(filepath), &ws);
   if (efailed(err)) {
     err = ethru(err);
     goto cleanup;
   }
-  err = config_load(config);
+  err = stream_create(&sp, ws.ptr);
   if (efailed(err)) {
     err = ethru(err);
     goto cleanup;
   }
-  if (config_get_need_postfix(config) && !has_postfix(filepath)) {
-    err = emsg(err_type_generic, err_abort, &native_unmanaged_const(NSTR("filename does not contain \"-ffmpeg\".")));
-    goto cleanup;
-  }
-  err = from_mbcs(&str_unmanaged_const(filepath), &ws);
-  if (efailed(err)) {
-    err = ethru(err);
-    goto cleanup;
-  }
-  file = CreateFileW(ws.ptr, GENERIC_READ, FILE_SHARE_READ, NULL, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL);
-  if (file == INVALID_HANDLE_VALUE) {
-    err = errhr(HRESULT_FROM_WIN32(GetLastError()));
-    goto cleanup;
-  }
-  err = mem(&fp, 1, sizeof(struct file));
-  if (efailed(err)) {
-    err = ethru(err);
-    goto cleanup;
-  }
-  *fp = (struct file){
-      .file = file,
-      .config = config,
-  };
-  err = create_video(fp, &v);
-  if (efailed(err)) {
-    ereport(err);
-  }
-  if (v) {
-    video_get_info(v, &vi);
-    fp->video_start_time = video_get_start_time(v);
-  }
-  err = create_audio(fp, &a);
-  if (efailed(err)) {
-    ereport(err);
-  }
-  if (a) {
-    audio_get_info(a, &ai);
-  }
-  if (!v && !a) {
-    err = errg(err_fail);
-    goto cleanup;
-  }
-  INPUT_INFO *ii = &fp->info;
-  if (v) {
-    fp->video_format = (BITMAPINFOHEADER){
-        .biSize = sizeof(BITMAPINFOHEADER),
-        .biWidth = vi.width,
-        .biHeight = vi.height,
-        .biCompression = vi.is_rgb ? MAKEFOURCC('B', 'G', 'R', 0) : MAKEFOURCC('Y', 'U', 'Y', '2'),
-        .biBitCount = (WORD)vi.bit_depth,
-    };
-    ii->flag |= INPUT_INFO_FLAG_VIDEO | INPUT_INFO_FLAG_VIDEO_RANDOM_ACCESS;
-    ii->rate = vi.frame_rate;
-    ii->scale = vi.frame_scale;
-    ii->n = (int)vi.frames;
-    ii->format = &fp->video_format;
-    ii->format_size = (int)fp->video_format.biSize;
-  }
-  if (a) {
-    fp->audio_format = (WAVEFORMATEX){
-        .wFormatTag = WAVE_FORMAT_PCM,
-        .nChannels = (WORD)ai.channels,
-        .nSamplesPerSec = (DWORD)ai.sample_rate,
-        .wBitsPerSample = (WORD)ai.bit_depth,
-        .nBlockAlign = (WORD)(ai.channels * ai.bit_depth / 8),
-        .nAvgBytesPerSec = (DWORD)(ai.sample_rate * ai.channels * ai.bit_depth / 8),
-        .cbSize = 0,
-    };
-    ii->flag |= INPUT_INFO_FLAG_AUDIO;
-    ii->audio_n = (int)ai.samples;
-    ii->audio_format = &fp->audio_format;
-    ii->audio_format_size = (int)(sizeof(WAVEFORMATEX) + fp->audio_format.cbSize);
-  }
-
 cleanup:
   ereport(sfree(&ws));
-  // In AviUtl's extended editing, video and audio are read as separate objects.
-  // As a result, two video and two audio streams are retained.
-  // To avoid this, I release both streams at this time and reopen them when a read request comes in.
-  audio_destroy(&a);
-  video_destroy(&v);
   if (efailed(err)) {
-    if (fp) {
-      ereport(mem_free(&fp));
-    }
-    if (file != INVALID_HANDLE_VALUE) {
-      CloseHandle(file);
-      file = INVALID_HANDLE_VALUE;
-    }
-    if (config) {
-      config_destroy(&config);
+    if (sp) {
+      stream_destroy(&sp);
     }
     ereport(err);
     return NULL;
   }
-  return (INPUT_HANDLE)fp;
+  return (INPUT_HANDLE)sp;
 }
 
 static HANDLE ffmpeg_dll_handles[5] = {0};
