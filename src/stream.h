@@ -4,12 +4,24 @@
 
 #include "info.h"
 
-struct stream;
+struct streammap;
 
-NODISCARD error stream_create(struct stream **const spp, wchar_t const *const filepath);
-void stream_destroy(struct stream **const spp);
-struct info_video const *stream_get_video_info(struct stream const *const sp);
-struct info_audio const *stream_get_audio_info(struct stream const *const sp);
-NODISCARD error stream_read_video(struct stream *const sp, int64_t const frame, void *const buf, size_t *const written);
-NODISCARD error stream_read_audio(
-    struct stream *const sp, int64_t const start, size_t const length, void *const buf, int *const written);
+NODISCARD error streammap_create(struct streammap **const smpp, size_t const keep_length);
+void streammap_destroy(struct streammap **const smpp);
+
+NODISCARD error streammap_create_stream(struct streammap *const smp,
+                                        wchar_t const *const filepath,
+                                        intptr_t *const idx);
+NODISCARD error streammap_free_stream(struct streammap *const smp, intptr_t const idx);
+
+struct info_video const *streammap_get_video_info(struct streammap *const smp, intptr_t const idx);
+struct info_audio const *streammap_get_audio_info(struct streammap *const smp, intptr_t const idx);
+
+NODISCARD error streammap_read_video(
+    struct streammap *const smp, intptr_t const idx, int64_t const frame, void *const buf, size_t *const written);
+NODISCARD error streammap_read_audio(struct streammap *const smp,
+                                     intptr_t const idx,
+                                     int64_t const start,
+                                     size_t const length,
+                                     void *const buf,
+                                     int *const written);

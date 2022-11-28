@@ -10,13 +10,15 @@
 #include "stream.h"
 #include "version.h"
 
-static bool ffmpeg_loaded = false;
+static bool g_ready = false;
+static struct streammap *g_smp = NULL;
 
 static BOOL ffmpeg_input_info_get(INPUT_HANDLE ih, INPUT_INFO *iip) {
-  struct stream *sp = (void *)ih;
-
+  if (!g_ready) {
+    return FALSE;
+  }
   static BITMAPINFOHEADER bih = {0};
-  struct info_video const *const vi = stream_get_video_info(sp);
+  struct info_video const *const vi = streammap_get_video_info(g_smp, (intptr_t)ih);
   if (vi->width) {
     bih = (BITMAPINFOHEADER){
         .biSize = sizeof(BITMAPINFOHEADER),
@@ -34,7 +36,7 @@ static BOOL ffmpeg_input_info_get(INPUT_HANDLE ih, INPUT_INFO *iip) {
   }
 
   static WAVEFORMATEX wfex = {0};
-  struct info_audio const *const ai = stream_get_audio_info(sp);
+  struct info_audio const *const ai = streammap_get_audio_info(g_smp, (intptr_t)ih);
   if (ai->sample_rate) {
     wfex = (WAVEFORMATEX){
         .wFormatTag = WAVE_FORMAT_PCM,
@@ -54,9 +56,11 @@ static BOOL ffmpeg_input_info_get(INPUT_HANDLE ih, INPUT_INFO *iip) {
 }
 
 static int ffmpeg_input_read_video(INPUT_HANDLE ih, int frame, void *buf) {
-  struct stream *sp = (void *)ih;
+  if (!g_ready) {
+    return 0;
+  }
   size_t wr = 0;
-  error err = stream_read_video(sp, (int64_t)frame, buf, &wr);
+  error err = streammap_read_video(g_smp, (intptr_t)ih, (int64_t)frame, buf, &wr);
   if (efailed(err)) {
     ereport(err);
     return 0;
@@ -65,9 +69,11 @@ static int ffmpeg_input_read_video(INPUT_HANDLE ih, int frame, void *buf) {
 }
 
 static int ffmpeg_input_read_audio(INPUT_HANDLE ih, int start, int length, void *buf) {
-  struct stream *sp = (void *)ih;
+  if (!g_ready) {
+    return 0;
+  }
   int wr = 0;
-  error err = stream_read_audio(sp, (int64_t)start, (size_t)length, buf, &wr);
+  error err = streammap_read_audio(g_smp, (intptr_t)ih, (int64_t)start, (size_t)length, buf, &wr);
   if (efailed(err)) {
     ereport(err);
     return 0;
@@ -76,23 +82,29 @@ static int ffmpeg_input_read_audio(INPUT_HANDLE ih, int start, int length, void 
 }
 
 static BOOL ffmpeg_input_close(INPUT_HANDLE ih) {
-  struct stream *sp = (void *)ih;
-  stream_destroy(&sp);
+  if (!g_ready) {
+    return FALSE;
+  }
+  error err = streammap_free_stream(g_smp, (intptr_t)ih);
+  if (efailed(err)) {
+    ereport(err);
+    return FALSE;
+  }
   return TRUE;
 }
 
 static INPUT_HANDLE ffmpeg_input_open(char *filepath) {
-  if (!ffmpeg_loaded) {
+  if (!g_ready) {
     return NULL;
   }
   struct wstr ws = {0};
-  struct stream *sp = NULL;
+  intptr_t idx = 0;
   error err = from_mbcs(&str_unmanaged_const(filepath), &ws);
   if (efailed(err)) {
     err = ethru(err);
     goto cleanup;
   }
-  err = stream_create(&sp, ws.ptr);
+  err = streammap_create_stream(g_smp, ws.ptr, &idx);
   if (efailed(err)) {
     err = ethru(err);
     goto cleanup;
@@ -100,13 +112,10 @@ static INPUT_HANDLE ffmpeg_input_open(char *filepath) {
 cleanup:
   ereport(sfree(&ws));
   if (efailed(err)) {
-    if (sp) {
-      stream_destroy(&sp);
-    }
     ereport(err);
     return NULL;
   }
-  return (INPUT_HANDLE)sp;
+  return (INPUT_HANDLE)idx;
 }
 
 static HANDLE ffmpeg_dll_handles[5] = {0};
@@ -217,7 +226,13 @@ static BOOL ffmpeg_input_init(void) {
     }
   }
 
-  ffmpeg_loaded = true;
+  g_ready = true;
+
+  err = streammap_create(&g_smp, 4);
+  if (efailed(err)) {
+    err = ethru(err);
+    goto cleanup;
+  }
 cleanup:
   if (old_search_path.ptr) {
     SetDllDirectoryW(old_search_path.ptr);
@@ -232,6 +247,7 @@ cleanup:
 }
 
 static BOOL ffmpeg_input_exit(void) {
+  streammap_destroy(&g_smp);
   for (size_t i = 0; i < sizeof(ffmpeg_dll_handles) / sizeof(ffmpeg_dll_handles[0]); ++i) {
     if (ffmpeg_dll_handles[i]) {
       FreeLibrary(ffmpeg_dll_handles[i]);
