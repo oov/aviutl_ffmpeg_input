@@ -6,7 +6,7 @@
 
 struct streammap;
 
-NODISCARD error streammap_create(struct streammap **const smpp, size_t const keep_length);
+NODISCARD error streammap_create(struct streammap **const smpp);
 void streammap_destroy(struct streammap **const smpp);
 
 NODISCARD error streammap_create_stream(struct streammap *const smp,

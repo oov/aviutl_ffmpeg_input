@@ -228,7 +228,7 @@ static BOOL ffmpeg_input_init(void) {
 
   g_ready = true;
 
-  err = streammap_create(&g_smp, 4);
+  err = streammap_create(&g_smp);
   if (efailed(err)) {
     err = ethru(err);
     goto cleanup;
@@ -283,10 +283,11 @@ static struct {
 
 enum config_control {
   ID_BTN_ABOUT = 100,
-  ID_EDT_DECODERS = 1001,
-  ID_CMB_SCALING = 1003,
-  ID_CHK_USE_AUDIO_INDEX = 2000,
-  ID_CHK_INVERT_PHASE = 2001,
+  ID_EDT_DECODERS = 1000,
+  ID_CHK_HANDLE_POOL = 1001,
+  ID_CMB_SCALING = 2000,
+  ID_CHK_USE_AUDIO_INDEX = 3000,
+  ID_CHK_INVERT_PHASE = 3001,
 };
 
 static wchar_t *ver_to_str(wchar_t *const buf, char const *const ident, unsigned int ver) {
@@ -309,6 +310,7 @@ static INT_PTR CALLBACK config_wndproc(HWND const dlg, UINT const message, WPARA
     struct config_dialog_props *const pr = (void *)lparam;
     SetPropW(dlg, config_prop, (HANDLE)pr);
     SetWindowTextW(dlg, "FFmpeg Video Reader " VERSION_WIDE);
+    set_check(dlg, ID_CHK_HANDLE_POOL, config_get_handle_pool(pr->config));
     SetWindowTextA(GetDlgItem(dlg, ID_EDT_DECODERS), config_get_preferred_decoders(pr->config));
     HWND h = GetDlgItem(dlg, ID_CMB_SCALING);
     enum video_format_scaling_algorithm const id = config_get_scaling(pr->config);
@@ -335,6 +337,11 @@ static INT_PTR CALLBACK config_wndproc(HWND const dlg, UINT const message, WPARA
       struct config_dialog_props *const pr = (void *)GetPropW(dlg, config_prop);
       if (!pr) {
         err = errg(err_unexpected);
+        goto cleanup;
+      }
+      err = config_set_handle_pool(pr->config, get_check(dlg, ID_CHK_HANDLE_POOL));
+      if (efailed(err)) {
+        err = ethru(err);
         goto cleanup;
       }
       HWND h = GetDlgItem(dlg, ID_EDT_DECODERS);

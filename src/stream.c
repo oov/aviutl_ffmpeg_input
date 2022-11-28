@@ -129,6 +129,19 @@ static bool inline is_same_fileid(struct fileid const *const a, struct fileid co
   return a->id == b->id && a->volume == b->volume;
 }
 
+static NODISCARD error stream_get_fileid(struct stream const*const sp, struct fileid *const fid) {
+  if (!sp || !fid) {
+    return errg(err_invalid_arugment);
+  }
+  error err = get_fileid(sp->file, fid);
+  if (efailed(err)) {
+    err = ethru(err);
+    goto cleanup;
+  }
+cleanup:
+  return err;
+}
+
 static NODISCARD error stream_create(struct stream **const spp,
                                      struct config const *const config,
                                      wchar_t const *const filepath) {
@@ -275,7 +288,7 @@ cleanup:
   return err;
 }
 
-struct freeitem {
+struct poolitem {
   struct fileid fid;
   struct timespec used_at;
   struct stream *stream;
@@ -290,31 +303,18 @@ struct streammap {
   struct config *config;
   struct hmap map;
   int key_index;
-  struct freeitem *freelist;
-  size_t freelist_length;
+  struct poolitem *pool;
+  size_t pool_length;
 };
 
-NODISCARD error streammap_create(struct streammap **smpp, size_t const keep_length) {
+NODISCARD error streammap_create(struct streammap **smpp) {
   struct streammap *smp = NULL;
   error err = mem(&smp, 1, sizeof(struct streammap));
   if (efailed(err)) {
     err = ethru(err);
     goto cleanup;
   }
-  *smp = (struct streammap){
-      .freelist_length = keep_length,
-  };
-  err = hmnews(&smp->map, sizeof(struct streamitem), 4, sizeof(intptr_t));
-  if (efailed(err)) {
-    err = ethru(err);
-    goto cleanup;
-  }
-  err = mem(&smp->freelist, keep_length, sizeof(struct freeitem));
-  if (efailed(err)) {
-    err = ethru(err);
-    goto cleanup;
-  }
-  memset(smp->freelist, 0, sizeof(struct freeitem) * keep_length);
+  *smp = (struct streammap){0};
   err = config_create(&smp->config);
   if (efailed(err)) {
     err = ethru(err);
@@ -324,6 +324,23 @@ NODISCARD error streammap_create(struct streammap **smpp, size_t const keep_leng
   if (efailed(err)) {
     err = ethru(err);
     goto cleanup;
+  }
+  err = hmnews(&smp->map, sizeof(struct streamitem), 4, sizeof(intptr_t));
+  if (efailed(err)) {
+    err = ethru(err);
+    goto cleanup;
+  }
+  if (config_get_handle_pool(smp->config)) {
+    enum {
+      keep_length = 4,
+    };
+    smp->pool_length = keep_length;
+    err = mem(&smp->pool, keep_length, sizeof(struct poolitem));
+    if (efailed(err)) {
+      err = ethru(err);
+      goto cleanup;
+    }
+    memset(smp->pool, 0, sizeof(struct poolitem) * keep_length);
   }
   *smpp = smp;
 #ifndef NDEBUG
@@ -338,8 +355,8 @@ cleanup:
 
 static bool cleaner(void const *const item, void *const udata) {
   (void)udata;
-  struct freeitem *fi = ov_deconster_(item);
-  stream_destroy(&fi->stream);
+  struct streamitem *si = ov_deconster_(item);
+  stream_destroy(&si->stream);
   return true;
 }
 
@@ -348,12 +365,12 @@ void streammap_destroy(struct streammap **const smpp) {
     return;
   }
   struct streammap *const smp = *smpp;
-  if (smp->freelist) {
-    for (size_t i = 0; i < smp->freelist_length; ++i) {
-      stream_destroy(&smp->freelist[i].stream);
+  if (smp->pool) {
+    for (size_t i = 0; i < smp->pool_length; ++i) {
+      stream_destroy(&smp->pool[i].stream);
     }
+    ereport(mem_free(&smp->pool));
   }
-  ereport(mem_free(&smp->freelist));
   ereport(hmscan(&smp->map, cleaner, NULL));
   ereport(hmfree(&smp->map));
   config_destroy(&smp->config);
@@ -363,20 +380,18 @@ void streammap_destroy(struct streammap **const smpp) {
 #endif
 }
 
-static NODISCARD error find_from_freelist(struct streammap *const smp,
-                                          wchar_t const *const filepath,
-                                          struct stream **sp) {
+static NODISCARD error find_from_pool(struct streammap *const smp, wchar_t const *const filepath, struct stream **sp) {
   struct fileid fid = {0};
   error err = get_fileid_from_filepath(filepath, &fid);
   if (efailed(err)) {
     err = ethru(err);
     goto cleanup;
   }
-  struct freeitem *found = NULL;
-  for (size_t i = 0; i < smp->freelist_length; ++i) {
-    if (is_same_fileid(&fid, &smp->freelist[i].fid)) {
-      if (!found || isold(&found->used_at, &smp->freelist[i].used_at)) {
-        found = smp->freelist + i;
+  struct poolitem *found = NULL;
+  for (size_t i = 0; i < smp->pool_length; ++i) {
+    if (is_same_fileid(&fid, &smp->pool[i].fid)) {
+      if (!found || isold(&found->used_at, &smp->pool[i].used_at)) {
+        found = smp->pool + i;
       }
     }
   }
@@ -384,7 +399,7 @@ static NODISCARD error find_from_freelist(struct streammap *const smp,
     goto cleanup;
   }
   *sp = found->stream;
-  *found = (struct freeitem){0};
+  *found = (struct poolitem){0};
 cleanup:
   return err;
 }
@@ -396,10 +411,13 @@ NODISCARD error streammap_create_stream(struct streammap *const smp,
     return errg(err_invalid_arugment);
   }
   struct stream *sp = NULL;
-  error err = find_from_freelist(smp, filepath, &sp);
-  if (efailed(err)) {
-    err = ethru(err);
-    goto cleanup;
+  error err = eok();
+  if (smp->pool_length) {
+    err = find_from_pool(smp, filepath, &sp);
+    if (efailed(err)) {
+      err = ethru(err);
+      goto cleanup;
+    }
   }
   if (!sp) {
     err = stream_create(&sp, smp->config, filepath);
@@ -443,26 +461,26 @@ static struct stream *get_stream(struct streammap *const smp, intptr_t const idx
   return si->stream;
 }
 
-static NODISCARD error add_to_freelist(struct streammap *const smp, struct stream *sp) {
-  struct freeitem fi = {
+static NODISCARD error add_to_pool(struct streammap *const smp, struct stream *sp) {
+  struct poolitem fi = {
       .stream = sp,
   };
   if (timespec_get(&fi.used_at, TIME_UTC) != TIME_UTC) {
     return errg(err_invalid_arugment);
   }
-  error err = get_fileid(sp->file, &fi.fid);
+  error err = stream_get_fileid(sp, &fi.fid);
   if (efailed(err)) {
     err = ethru(err);
     goto cleanup;
   }
-  struct freeitem *unused = NULL;
-  struct freeitem *oldest = NULL;
-  for (size_t i = 0; i < smp->freelist_length; ++i) {
-    if (!oldest || isold(&oldest->used_at, &smp->freelist[i].used_at)) {
-      oldest = smp->freelist + i;
+  struct poolitem *unused = NULL;
+  struct poolitem *oldest = NULL;
+  for (size_t i = 0; i < smp->pool_length; ++i) {
+    if (!oldest || isold(&oldest->used_at, &smp->pool[i].used_at)) {
+      oldest = smp->pool + i;
     }
-    if (!unused && !smp->freelist[i].stream) {
-      unused = smp->freelist + i;
+    if (!unused && !smp->pool[i].stream) {
+      unused = smp->pool + i;
       break;
     }
   }
@@ -489,7 +507,11 @@ NODISCARD error streammap_free_stream(struct streammap *const smp, intptr_t cons
   if (!si) {
     goto cleanup;
   }
-  err = add_to_freelist(smp, si->stream);
+  if (!smp->pool_length) {
+    stream_destroy(&si->stream);
+    goto cleanup;
+  }
+  err = add_to_pool(smp, si->stream);
   if (efailed(err)) {
     stream_destroy(&si->stream);
     err = ethru(err);
@@ -498,7 +520,7 @@ NODISCARD error streammap_free_stream(struct streammap *const smp, intptr_t cons
 #ifndef NDEBUG
   {
     char s[256];
-    wsprintfA(s, "key:%d moved to freelist", idx);
+    wsprintfA(s, "key:%d moved to pool", idx);
     OutputDebugStringA(s);
   }
 #endif

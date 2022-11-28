@@ -5,12 +5,13 @@
 #include "ovutil/win32.h"
 
 struct config {
-  bool modified;
   struct str preferred_decoders;
-  bool need_postfix;
   enum video_format_scaling_algorithm scaling;
+  bool handle_pool;
+  bool need_postfix;
   bool use_audio_index;
   bool invert_phase;
+  bool modified;
 };
 
 NODISCARD error config_create(struct config **cp) {
@@ -29,6 +30,8 @@ cleanup:
   return err;
 }
 
+bool config_get_handle_pool(struct config const *const c) { return c->handle_pool; }
+
 char const *config_get_preferred_decoders(struct config const *const c) {
   return c->preferred_decoders.ptr ? c->preferred_decoders.ptr : "";
 }
@@ -40,6 +43,18 @@ bool config_get_need_postfix(struct config const *const c) { return c->need_post
 bool config_get_use_audio_index(struct config const *const c) { return c->use_audio_index; }
 
 bool config_get_invert_phase(struct config const *const c) { return c->invert_phase; }
+
+NODISCARD error config_set_handle_pool(struct config *const c, bool const handle_pool) {
+  if (!c) {
+    return errg(err_invalid_arugment);
+  }
+  if (c->handle_pool == !!handle_pool) {
+    return eok();
+  }
+  c->handle_pool = !!handle_pool;
+  c->modified = true;
+  return eok();
+}
 
 NODISCARD error config_set_preferred_decoders(struct config *const c, char const *const preferred_decoders) {
   if (!c || !preferred_decoders) {
@@ -167,7 +182,13 @@ static NODISCARD error load(struct config *c) {
     buffer_size = 4096,
   };
   char buf[buffer_size];
-  DWORD len = GetPrivateProfileStringA("global", "preferred_decoders", "", buf, buffer_size, filepath.ptr);
+  DWORD len;
+  err = config_set_handle_pool(c, GetPrivateProfileIntA("global", "handle_pool", 0, filepath.ptr) != 0);
+  if (efailed(err)) {
+    err = ethru(err);
+    goto cleanup;
+  }
+  len = GetPrivateProfileStringA("global", "preferred_decoders", "", buf, buffer_size, filepath.ptr);
   buf[len] = '\0';
   err = config_set_preferred_decoders(c, buf);
   if (efailed(err)) {
@@ -217,6 +238,7 @@ NODISCARD error config_load(struct config *c) {
     goto cleanup;
   }
   ereport(sfree(&c->preferred_decoders));
+  c->handle_pool = tmp->handle_pool;
   c->preferred_decoders = tmp->preferred_decoders;
   tmp->preferred_decoders = (struct str){0};
   c->need_postfix = tmp->need_postfix;
@@ -241,6 +263,10 @@ NODISCARD error config_save(struct config *c) {
   error err = get_config_filename(&filepath);
   if (efailed(err)) {
     err = ethru(err);
+    goto cleanup;
+  }
+  if (!WritePrivateProfileStringA("global", "handle_pool", config_get_handle_pool(c) ? "1" : "0", filepath.ptr)) {
+    err = errhr(HRESULT_FROM_WIN32(GetLastError()));
     goto cleanup;
   }
   if (!WritePrivateProfileStringA("global", "preferred_decoders", config_get_preferred_decoders(c), filepath.ptr)) {
