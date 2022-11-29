@@ -191,6 +191,9 @@ static NODISCARD error stream_create(struct stream **const spp,
     goto cleanup;
   }
   *spp = sp;
+#ifndef NDEBUG
+  OutputDebugStringA("created new stream");
+#endif
 cleanup:
   // In AviUtl's extended editing, video and audio are read as separate objects.
   // As a result, two video and two audio streams are retained.
@@ -218,6 +221,9 @@ static void stream_destroy(struct stream **const spp) {
   struct stream *sp = *spp;
   if (--sp->refcount > 0) {
     *spp = NULL;
+#ifndef NDEBUG
+    OutputDebugStringA("release stream");
+#endif
     return;
   }
   video_destroy(&sp->v);
@@ -227,6 +233,9 @@ static void stream_destroy(struct stream **const spp) {
     sp->file = INVALID_HANDLE_VALUE;
   }
   ereport(mem_free(&sp));
+#ifndef NDEBUG
+  OutputDebugStringA("destroy stream");
+#endif
 }
 
 static struct info_video const *stream_get_video_info(struct stream const *const sp) { return &sp->vi; }
@@ -408,6 +417,9 @@ static NODISCARD error find_from_pool(struct streammap *const smp, wchar_t const
   }
   *sp = found->stream;
   *found = (struct poolitem){0};
+#ifndef NDEBUG
+  OutputDebugStringA("found in pool");
+#endif
 cleanup:
   return err;
 }
@@ -462,6 +474,9 @@ static NODISCARD error find_from_map(struct streammap *const smp, wchar_t const 
   if (fmd.found) {
     stream_addref(fmd.found);
     *sp = fmd.found;
+#ifndef NDEBUG
+    OutputDebugStringA("reuse from map");
+#endif
   }
 cleanup:
   return err;
@@ -513,13 +528,6 @@ NODISCARD error streammap_create_stream(struct streammap *const smp,
     goto cleanup;
   }
   *idx = smp->key_index;
-#ifndef NDEBUG
-  {
-    char s[256];
-    wsprintfA(s, "key:%d created", smp->key_index);
-    OutputDebugStringA(s);
-  }
-#endif
 cleanup:
   return err;
 }
@@ -565,6 +573,9 @@ static NODISCARD error add_to_pool(struct streammap *const smp, struct stream *s
     unused = oldest;
   }
   *unused = fi;
+#ifndef NDEBUG
+  OutputDebugStringA("moved to pool");
+#endif
 cleanup:
   return err;
 }
@@ -593,13 +604,6 @@ NODISCARD error streammap_free_stream(struct streammap *const smp, intptr_t cons
     err = ethru(err);
     goto cleanup;
   }
-#ifndef NDEBUG
-  {
-    char s[256];
-    wsprintfA(s, "key:%d moved to pool", idx);
-    OutputDebugStringA(s);
-  }
-#endif
 cleanup:
   return err;
 }
