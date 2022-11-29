@@ -7,7 +7,7 @@
 struct config {
   struct str preferred_decoders;
   enum video_format_scaling_algorithm scaling;
-  bool handle_pool;
+  enum config_handle_manage_mode handle_manage_mode;
   bool need_postfix;
   bool use_audio_index;
   bool invert_phase;
@@ -30,7 +30,9 @@ cleanup:
   return err;
 }
 
-bool config_get_handle_pool(struct config const *const c) { return c->handle_pool; }
+enum config_handle_manage_mode config_get_handle_manage_mode(struct config const *const c) {
+  return c->handle_manage_mode;
+}
 
 char const *config_get_preferred_decoders(struct config const *const c) {
   return c->preferred_decoders.ptr ? c->preferred_decoders.ptr : "";
@@ -44,14 +46,24 @@ bool config_get_use_audio_index(struct config const *const c) { return c->use_au
 
 bool config_get_invert_phase(struct config const *const c) { return c->invert_phase; }
 
-NODISCARD error config_set_handle_pool(struct config *const c, bool const handle_pool) {
+NODISCARD error config_set_handle_manage_mode(struct config *const c,
+                                              enum config_handle_manage_mode handle_manage_mode) {
   if (!c) {
     return errg(err_invalid_arugment);
   }
-  if (c->handle_pool == !!handle_pool) {
+  if (c->handle_manage_mode == handle_manage_mode) {
     return eok();
   }
-  c->handle_pool = !!handle_pool;
+  switch ((int)handle_manage_mode) {
+  case chmm_normal:
+  case chmm_cache:
+  case chmm_pool:
+    break;
+  default:
+    handle_manage_mode = chmm_normal;
+    break;
+  }
+  c->handle_manage_mode = handle_manage_mode;
   c->modified = true;
   return eok();
 }
@@ -183,7 +195,9 @@ static NODISCARD error load(struct config *c) {
   };
   char buf[buffer_size];
   DWORD len;
-  err = config_set_handle_pool(c, GetPrivateProfileIntA("global", "handle_pool", 0, filepath.ptr) != 0);
+  err = config_set_handle_manage_mode(c,
+                                      (enum config_handle_manage_mode)(GetPrivateProfileIntA(
+                                          "global", "handle_manage_mode", chmm_cache, filepath.ptr)));
   if (efailed(err)) {
     err = ethru(err);
     goto cleanup;
@@ -238,7 +252,7 @@ NODISCARD error config_load(struct config *c) {
     goto cleanup;
   }
   ereport(sfree(&c->preferred_decoders));
-  c->handle_pool = tmp->handle_pool;
+  c->handle_manage_mode = tmp->handle_manage_mode;
   c->preferred_decoders = tmp->preferred_decoders;
   tmp->preferred_decoders = (struct str){0};
   c->need_postfix = tmp->need_postfix;
@@ -265,7 +279,8 @@ NODISCARD error config_save(struct config *c) {
     err = ethru(err);
     goto cleanup;
   }
-  if (!WritePrivateProfileStringA("global", "handle_pool", config_get_handle_pool(c) ? "1" : "0", filepath.ptr)) {
+  if (!WritePrivateProfileStringA(
+          "global", "handle_manage_mode", ov_itoa((int64_t)(config_get_handle_manage_mode(c)), buf), filepath.ptr)) {
     err = errhr(HRESULT_FROM_WIN32(GetLastError()));
     goto cleanup;
   }

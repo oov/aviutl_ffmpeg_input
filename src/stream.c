@@ -9,6 +9,7 @@
 #include "video.h"
 
 struct stream {
+  int refcount;
   HANDLE file;
   struct config const *config;
   struct video *v;
@@ -129,7 +130,7 @@ static bool inline is_same_fileid(struct fileid const *const a, struct fileid co
   return a->id == b->id && a->volume == b->volume;
 }
 
-static NODISCARD error stream_get_fileid(struct stream const*const sp, struct fileid *const fid) {
+static NODISCARD error stream_get_fileid(struct stream const *const sp, struct fileid *const fid) {
   if (!sp || !fid) {
     return errg(err_invalid_arugment);
   }
@@ -168,6 +169,7 @@ static NODISCARD error stream_create(struct stream **const spp,
     goto cleanup;
   }
   *sp = (struct stream){
+      .refcount = 1,
       .file = file,
       .config = config,
   };
@@ -207,11 +209,17 @@ cleanup:
   return err;
 }
 
+static void stream_addref(struct stream *const sp) { ++sp->refcount; }
+
 static void stream_destroy(struct stream **const spp) {
   if (!spp || !*spp) {
     return;
   }
   struct stream *sp = *spp;
+  if (--sp->refcount > 0) {
+    *spp = NULL;
+    return;
+  }
   video_destroy(&sp->v);
   audio_destroy(&sp->a);
   if (sp->file != INVALID_HANDLE_VALUE) {
@@ -330,7 +338,7 @@ NODISCARD error streammap_create(struct streammap **smpp) {
     err = ethru(err);
     goto cleanup;
   }
-  if (config_get_handle_pool(smp->config)) {
+  if (config_get_handle_manage_mode(smp->config) == chmm_pool) {
     enum {
       keep_length = 4,
     };
@@ -404,6 +412,61 @@ cleanup:
   return err;
 }
 
+struct find_map_data {
+  struct fileid fid;
+  struct stream *found;
+  error err;
+};
+
+static bool find_map(void const *const item, void *const udata) {
+  struct streamitem *si = ov_deconster_(item);
+  struct find_map_data *fmd = udata;
+  struct fileid fid;
+  error err = stream_get_fileid(si->stream, &fid);
+  if (efailed(err)) {
+    err = ethru(err);
+    goto cleanup;
+  }
+  if (is_same_fileid(&fmd->fid, &fid)) {
+    fmd->found = si->stream;
+  }
+cleanup:
+  if (efailed(err)) {
+    fmd->err = err;
+    return false;
+  }
+  return !fmd->found;
+}
+
+static NODISCARD error find_from_map(struct streammap *const smp, wchar_t const *const filepath, struct stream **sp) {
+  struct find_map_data fmd = {0};
+  error err = get_fileid_from_filepath(filepath, &fmd.fid);
+  if (efailed(err)) {
+    err = ethru(err);
+    goto cleanup;
+  }
+  err = hmscan(&smp->map, find_map, &fmd);
+  if (efailed(err)) {
+    if (eisg(err, err_abort)) {
+      efree(&err);
+    } else {
+      err = ethru(err);
+      goto cleanup;
+    }
+  }
+  err = fmd.err;
+  if (efailed(err)) {
+    err = ethru(err);
+    goto cleanup;
+  }
+  if (fmd.found) {
+    stream_addref(fmd.found);
+    *sp = fmd.found;
+  }
+cleanup:
+  return err;
+}
+
 NODISCARD error streammap_create_stream(struct streammap *const smp,
                                         wchar_t const *const filepath,
                                         intptr_t *const idx) {
@@ -412,12 +475,25 @@ NODISCARD error streammap_create_stream(struct streammap *const smp,
   }
   struct stream *sp = NULL;
   error err = eok();
-  if (smp->pool_length) {
+  switch (config_get_handle_manage_mode(smp->config)) {
+  case chmm_normal:
+    break;
+
+  case chmm_cache:
+    err = find_from_map(smp, filepath, &sp);
+    if (efailed(err)) {
+      err = ethru(err);
+      goto cleanup;
+    }
+    break;
+
+  case chmm_pool:
     err = find_from_pool(smp, filepath, &sp);
     if (efailed(err)) {
       err = ethru(err);
       goto cleanup;
     }
+    break;
   }
   if (!sp) {
     err = stream_create(&sp, smp->config, filepath);

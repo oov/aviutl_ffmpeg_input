@@ -10,23 +10,25 @@
 
 LANGUAGE LANG_JAPANESE, SUBLANG_DEFAULT
 
-CONFIG DIALOG 0, 0, 200, 176
+CONFIG DIALOG 0, 0, 200, 196
 STYLE DS_CENTER | DS_MODALFRAME | WS_POPUPWINDOW | WS_CAPTION
-FONT 9, "Segoe UI"
+FONT 9, "Meiryo UI"
 {
-    DEFPUSHBUTTON "OK", IDOK, 78, 158, 56, 12
-    PUSHBUTTON "キャンセル", IDCANCEL, 136, 158, 56, 12
-    LTEXT "優先するデコーダー(&D):", -1, 8, 8, 184, 9
-    EDITTEXT 1000, 8, 17, 184, 12
-    AUTOCHECKBOX "ハンドルプールを使用する(&H)", 1001, 8, 34, 168, 9
-    GROUPBOX "映像", -1, 8, 56, 184, 40
-    LTEXT "カラーフォーマット変換時のスケーリングアルゴリズム(&C):", -1, 16, 68, 168, 9
-    COMBOBOX 2000, 16, 77, 168, 300, CBS_HASSTRINGS | CBS_AUTOHSCROLL | CBS_DROPDOWNLIST | WS_VSCROLL | WS_TABSTOP
-    GROUPBOX "音声", -1, 8, 100, 184, 41
-    AUTOCHECKBOX "音ズレ軽減(&I)", 3000, 16, 112, 168, 9
-    AUTOCHECKBOX "位相を反転（デバッグ用）(&P)", 3001, 16, 125, 168, 9
-    PUSHBUTTON "&About...", 100, 8, 158, 48, 12
-    LTEXT "※変更は AviUtl の再起動後に反映されます", -1, 8, 147, 184, 9, NOT WS_GROUP, WS_EX_RIGHT
+    DEFPUSHBUTTON "OK", IDOK, 78, 178, 56, 12
+    PUSHBUTTON "キャンセル", IDCANCEL, 136, 178, 56, 12
+    AUTOCHECKBOX "ファイル名が ""-ffmpeg"" で終わるファイルだけ読み込む(&F)", 1000, 8, 8, 184, 9
+    LTEXT "優先するデコーダー(&D):", -1, 8, 22, 184, 9
+    EDITTEXT 1001, 8, 31, 184, 12
+    LTEXT "リソース管理モード(&R):", -1, 8, 48, 184, 9
+    COMBOBOX 1002, 8, 57, 184, 300, CBS_HASSTRINGS | CBS_AUTOHSCROLL | CBS_DROPDOWNLIST | WS_VSCROLL | WS_TABSTOP
+    GROUPBOX "映像", -1, 8, 76, 184, 40
+    LTEXT "カラーフォーマット変換時のスケーリングアルゴリズム(&C):", -1, 16, 88, 168, 9
+    COMBOBOX 2000, 16, 97, 168, 300, CBS_HASSTRINGS | CBS_AUTOHSCROLL | CBS_DROPDOWNLIST | WS_VSCROLL | WS_TABSTOP
+    GROUPBOX "音声", -1, 8, 120, 184, 41
+    AUTOCHECKBOX "音ズレ軽減(&I)", 3000, 16, 132, 168, 9
+    AUTOCHECKBOX "位相を反転（デバッグ用）(&P)", 3001, 16, 145, 168, 9
+    PUSHBUTTON "&About...", 100, 8, 178, 48, 12
+    LTEXT "※変更は AviUtl の再起動後に反映されます", -1, 8, 167, 184, 9, NOT WS_GROUP, WS_EX_RIGHT
 }
 
 #ifdef APSTUDIO_INVOKED

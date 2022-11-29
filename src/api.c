@@ -267,7 +267,7 @@ static wchar_t const config_prop[] = L"config_prop";
 static struct {
   enum video_format_scaling_algorithm const id;
   wchar_t const *name;
-} scaling_algorithms[] = {
+} const scaling_algorithms[] = {
     {video_format_scaling_algorithm_fast_bilinear, L"fast bilinear"},
     {video_format_scaling_algorithm_bilinear, L"bilinear"},
     {video_format_scaling_algorithm_bicubic, L"bicubic"},
@@ -281,10 +281,20 @@ static struct {
     {video_format_scaling_algorithm_spline, L"natural bicubic spline"},
 };
 
+static struct {
+  enum config_handle_manage_mode const id;
+  wchar_t const *name;
+} const handle_manage_modes[] = {
+    {chmm_normal, L"通常"},
+    {chmm_cache, L"ハンドルキャッシュ"},
+    {chmm_pool, L"ハンドルプール"},
+};
+
 enum config_control {
   ID_BTN_ABOUT = 100,
-  ID_EDT_DECODERS = 1000,
-  ID_CHK_HANDLE_POOL = 1001,
+  ID_CHK_NEED_POSTFIX = 1000,
+  ID_EDT_DECODERS = 1001,
+  ID_CMB_HANDLE_MANAGE_MODE = 1002,
   ID_CMB_SCALING = 2000,
   ID_CHK_USE_AUDIO_INDEX = 3000,
   ID_CHK_INVERT_PHASE = 3001,
@@ -310,18 +320,32 @@ static INT_PTR CALLBACK config_wndproc(HWND const dlg, UINT const message, WPARA
     struct config_dialog_props *const pr = (void *)lparam;
     SetPropW(dlg, config_prop, (HANDLE)pr);
     SetWindowTextW(dlg, "FFmpeg Video Reader " VERSION_WIDE);
-    set_check(dlg, ID_CHK_HANDLE_POOL, config_get_handle_pool(pr->config));
+    set_check(dlg, ID_CHK_NEED_POSTFIX, config_get_need_postfix(pr->config));
     SetWindowTextA(GetDlgItem(dlg, ID_EDT_DECODERS), config_get_preferred_decoders(pr->config));
-    HWND h = GetDlgItem(dlg, ID_CMB_SCALING);
-    enum video_format_scaling_algorithm const id = config_get_scaling(pr->config);
-    size_t selected_index = 0;
-    for (size_t i = 0, len = sizeof(scaling_algorithms) / sizeof(scaling_algorithms[0]); i < len; ++i) {
-      SendMessageW(h, CB_ADDSTRING, 0, (LPARAM)scaling_algorithms[i].name);
-      if (scaling_algorithms[i].id == id) {
-        selected_index = i;
+    {
+      HWND h = GetDlgItem(dlg, ID_CMB_HANDLE_MANAGE_MODE);
+      enum config_handle_manage_mode const id = config_get_handle_manage_mode(pr->config);
+      size_t selected_index = 0;
+      for (size_t i = 0, len = sizeof(handle_manage_modes) / sizeof(handle_manage_modes[0]); i < len; ++i) {
+        SendMessageW(h, CB_ADDSTRING, 0, (LPARAM)handle_manage_modes[i].name);
+        if (handle_manage_modes[i].id == id) {
+          selected_index = i;
+        }
       }
+      SendMessageW(h, CB_SETCURSEL, (WPARAM)selected_index, 0);
     }
-    SendMessageW(h, CB_SETCURSEL, (WPARAM)selected_index, 0);
+    {
+      HWND h = GetDlgItem(dlg, ID_CMB_SCALING);
+      enum video_format_scaling_algorithm const id = config_get_scaling(pr->config);
+      size_t selected_index = 0;
+      for (size_t i = 0, len = sizeof(scaling_algorithms) / sizeof(scaling_algorithms[0]); i < len; ++i) {
+        SendMessageW(h, CB_ADDSTRING, 0, (LPARAM)scaling_algorithms[i].name);
+        if (scaling_algorithms[i].id == id) {
+          selected_index = i;
+        }
+      }
+      SendMessageW(h, CB_SETCURSEL, (WPARAM)selected_index, 0);
+    }
     set_check(dlg, ID_CHK_USE_AUDIO_INDEX, config_get_use_audio_index(pr->config));
     set_check(dlg, ID_CHK_INVERT_PHASE, config_get_invert_phase(pr->config));
     return TRUE;
@@ -339,7 +363,17 @@ static INT_PTR CALLBACK config_wndproc(HWND const dlg, UINT const message, WPARA
         err = errg(err_unexpected);
         goto cleanup;
       }
-      err = config_set_handle_pool(pr->config, get_check(dlg, ID_CHK_HANDLE_POOL));
+      {
+        size_t selected_index = (size_t)(SendMessageW(GetDlgItem(dlg, ID_CMB_HANDLE_MANAGE_MODE), CB_GETCURSEL, 0, 0));
+        if (selected_index < sizeof(handle_manage_modes) / sizeof(handle_manage_modes[0])) {
+          err = config_set_handle_manage_mode(pr->config, handle_manage_modes[selected_index].id);
+          if (efailed(err)) {
+            err = ethru(err);
+            goto cleanup;
+          }
+        }
+      }
+      err = config_set_need_postfix(pr->config, get_check(dlg, ID_CHK_NEED_POSTFIX));
       if (efailed(err)) {
         err = ethru(err);
         goto cleanup;
@@ -359,12 +393,14 @@ static INT_PTR CALLBACK config_wndproc(HWND const dlg, UINT const message, WPARA
         err = ethru(err);
         goto cleanup;
       }
-      size_t scaling_index = (size_t)(SendMessageW(GetDlgItem(dlg, ID_CMB_SCALING), CB_GETCURSEL, 0, 0));
-      if (scaling_index < sizeof(scaling_algorithms) / sizeof(scaling_algorithms[0])) {
-        err = config_set_scaling(pr->config, scaling_algorithms[scaling_index].id);
-        if (efailed(err)) {
-          err = ethru(err);
-          goto cleanup;
+      {
+        size_t selected_index = (size_t)(SendMessageW(GetDlgItem(dlg, ID_CMB_SCALING), CB_GETCURSEL, 0, 0));
+        if (selected_index < sizeof(scaling_algorithms) / sizeof(scaling_algorithms[0])) {
+          err = config_set_scaling(pr->config, scaling_algorithms[selected_index].id);
+          if (efailed(err)) {
+            err = ethru(err);
+            goto cleanup;
+          }
         }
       }
       err = config_set_use_audio_index(pr->config, get_check(dlg, ID_CHK_USE_AUDIO_INDEX));
