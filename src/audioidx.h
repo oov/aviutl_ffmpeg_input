@@ -12,4 +12,4 @@ struct audioidx_create_options {
 
 NODISCARD error audioidx_create(struct audioidx **const ipp, struct audioidx_create_options const *const opt);
 void audioidx_destroy(struct audioidx **const ipp);
-int64_t audioidx_get(struct audioidx *const ip, int64_t const pts);
+int64_t audioidx_get(struct audioidx *const ip, int64_t const pts, bool const wait_index);

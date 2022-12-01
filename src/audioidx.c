@@ -126,6 +126,9 @@ static int indexer(void *userdata) {
     samples += packet_samples;
   }
 cleanup:
+#ifndef NDEBUG
+  OutputDebugStringA("index completed");
+#endif
   ffmpeg_close(&fs);
   mtx_lock(&ip->mtx);
   ip->created_pts = INT64_MAX;
@@ -216,7 +219,10 @@ cleanup:
   return ictx.err;
 }
 
-int64_t audioidx_get(struct audioidx *const ip, int64_t const pts) {
+int64_t audioidx_get(struct audioidx *const ip, int64_t const pts, bool const wait_index) {
+#ifndef NDEBUG
+  OutputDebugStringA(wait_index ? "audioidx_get wait_index" : "audioidx_get fast");
+#endif
   error err = eok();
   int64_t pos = -1;
   mtx_lock(&ip->mtx);
@@ -227,8 +233,10 @@ int64_t audioidx_get(struct audioidx *const ip, int64_t const pts) {
       goto cleanup;
     }
   }
-  while (ip->created_pts < pts) {
-    cnd_wait(&ip->cnd, &ip->mtx);
+  if (wait_index) {
+    while (ip->created_pts < pts) {
+      cnd_wait(&ip->cnd, &ip->mtx);
+    }
   }
   struct item *p = NULL;
   err = hmget(&ip->ptsmap, (&(struct item){.key = pts}), &p);

@@ -40,7 +40,7 @@ struct handle {
   INPUT_HANDLE ih;
 };
 
-static INPUT_PLUGIN_TABLE *g_ipt = NULL;
+static struct own_api const *g_api = NULL;
 static struct ipcserver *g_serv = NULL;
 static wchar_t g_fmo_name[16] = {0};
 static HANDLE g_fmo = NULL;
@@ -59,7 +59,7 @@ static void ipc_handler_open(struct ipcserver_context *const ctx) {
         err_type_generic, err_invalid_arugment, &native_unmanaged_const(NSTR("open request packet size too small")));
     goto cleanup;
   }
-  if (!g_ipt->func_open) {
+  if (!g_api->original_api->func_open) {
     err =
         emsg(err_type_generic, err_not_implemented_yet, &native_unmanaged_const(NSTR("func_open is not implemented")));
     goto cleanup;
@@ -75,12 +75,12 @@ static void ipc_handler_open(struct ipcserver_context *const ctx) {
     err = ethru(err);
     goto cleanup;
   }
-  ih = g_ipt->func_open(filepath.ptr);
+  ih = g_api->original_api->func_open(filepath.ptr);
   if (!ih) {
     err = emsg(err_type_generic, err_fail, &native_unmanaged_const(NSTR("func_open failed")));
     goto cleanup;
   }
-  if (g_ipt->func_info_get(ih, &ii)) {
+  if (g_api->original_api->func_info_get(ih, &ii)) {
     err = mem(&h, 1, sizeof(struct handle));
     if (efailed(err)) {
       err = ethru(err);
@@ -106,7 +106,7 @@ static void ipc_handler_open(struct ipcserver_context *const ctx) {
 cleanup:
   if (efailed(err)) {
     if (ih) {
-      g_ipt->func_close(ih);
+      g_api->original_api->func_close(ih);
     }
   }
   ereport(sfree(&filepath));
@@ -121,14 +121,14 @@ static void ipc_handler_close(struct ipcserver_context *const ctx) {
                &native_unmanaged_const(NSTR("close request packet size is incorrect")));
     goto cleanup;
   }
-  if (!g_ipt->func_close) {
+  if (!g_api->original_api->func_close) {
     err =
         emsg(err_type_generic, err_not_implemented_yet, &native_unmanaged_const(NSTR("func_close is not implemented")));
     goto cleanup;
   }
   struct bridge_event_close_request const *const req = ctx->buffer;
   struct handle *h = (void *)req->id;
-  if (!g_ipt->func_close(h->ih)) {
+  if (!g_api->original_api->func_close(h->ih)) {
     err = emsg(err_type_generic, err_fail, &native_unmanaged_const(NSTR("func_close failed")));
     goto cleanup;
   }
@@ -156,7 +156,7 @@ static void ipc_handler_get_info(struct ipcserver_context *const ctx) {
                &native_unmanaged_const(NSTR("get_info request packet size is incorrect")));
     goto cleanup;
   }
-  if (!g_ipt->func_info_get) {
+  if (!g_api->original_api->func_info_get) {
     err = emsg(
         err_type_generic, err_not_implemented_yet, &native_unmanaged_const(NSTR("func_info_get is not implemented")));
     goto cleanup;
@@ -164,7 +164,7 @@ static void ipc_handler_get_info(struct ipcserver_context *const ctx) {
   struct bridge_event_get_info_request const *const req = ctx->buffer;
   struct handle *h = (void *)req->id;
   INPUT_INFO ii = {0};
-  if (!g_ipt->func_info_get(h->ih, &ii)) {
+  if (!g_api->original_api->func_info_get(h->ih, &ii)) {
     err = emsg(err_type_generic, err_not_implemented_yet, &native_unmanaged_const(NSTR("func_info_get failed")));
     goto cleanup;
   }
@@ -204,14 +204,14 @@ static void ipc_handler_read(struct ipcserver_context *const ctx) {
   }
   struct bridge_event_read_request const *const req = ctx->buffer;
   if (req->length == 0) {
-    if (!g_ipt->func_read_video) {
+    if (!g_api->func_read_video_ex) {
       err = emsg(err_type_generic,
                  err_not_implemented_yet,
                  &native_unmanaged_const(NSTR("func_read_video is not implemented")));
       goto cleanup;
     }
   } else {
-    if (!g_ipt->func_read_audio) {
+    if (!g_api->func_read_audio_ex) {
       err = emsg(err_type_generic,
                  err_not_implemented_yet,
                  &native_unmanaged_const(NSTR("func_read_audio is not implemented")));
@@ -240,8 +240,9 @@ static void ipc_handler_read(struct ipcserver_context *const ctx) {
     err = errhr(HRESULT_FROM_WIN32(GetLastError()));
     goto cleanup;
   }
-  int const written = req->length == 0 ? g_ipt->func_read_video(h->ih, req->start, mapped)
-                                       : g_ipt->func_read_audio(h->ih, req->start, req->length, mapped);
+  int const written = req->length == 0
+                          ? g_api->func_read_video_ex(h->ih, req->start, mapped, !!req->saving)
+                          : g_api->func_read_audio_ex(h->ih, req->start, req->length, mapped, !!req->saving);
   err = ctx->grow_buffer(ctx, sizeof(struct bridge_event_read_response));
   if (efailed(err)) {
     err = ethru(err);
@@ -272,13 +273,13 @@ static void ipc_handler_config(struct ipcserver_context *const ctx) {
                &native_unmanaged_const(NSTR("config request packet size is incorrect")));
     goto cleanup;
   }
-  if (!g_ipt->func_config) {
+  if (!g_api->original_api->func_config) {
     err = emsg(
         err_type_generic, err_not_implemented_yet, &native_unmanaged_const(NSTR("func_config is not implemented")));
     goto cleanup;
   }
   struct bridge_event_config_request const *const req = ctx->buffer;
-  if (!g_ipt->func_config((HWND)req->window, get_hinstance())) {
+  if (!g_api->original_api->func_config((HWND)req->window, get_hinstance())) {
     err = emsg(err_type_generic, err_fail, &native_unmanaged_const(NSTR("func_config failed")));
     goto cleanup;
   }
@@ -363,9 +364,9 @@ void __declspec(dllexport) CALLBACK BridgeMainW(HWND window, HINSTANCE hinstance
     goto cleanup;
   }
 
-  g_ipt = get_input_plugin_table();
-  if (g_ipt->func_init) {
-    if (!g_ipt->func_init()) {
+  g_api = get_own_api_endpoint();
+  if (g_api->original_api->func_init) {
+    if (!g_api->original_api->func_init()) {
       err = emsg(err_type_generic, err_fail, &native_unmanaged_const(NSTR("func_init failed")));
       goto cleanup;
     }
@@ -423,8 +424,8 @@ cleanup:
     g_fmo = NULL;
   }
   if (initialized) {
-    if (g_ipt->func_exit) {
-      if (!g_ipt->func_exit()) {
+    if (g_api->original_api->func_exit) {
+      if (!g_api->original_api->func_exit()) {
         ereport(emsg(err_type_generic, err_fail, &native_unmanaged_const(NSTR("func_exit failed"))));
       }
     }

@@ -28,6 +28,7 @@ add_library(ffmpeg_input SHARED
   api.c
   audioidx.c
   audio.c
+  aviutl.c
   bridgeclient.c
   bridgeserver.c
   config.c
@@ -108,6 +109,7 @@ foreach(target ${targets})
   target_link_libraries(${target} PRIVATE
     ovbase
     ovutil
+    psapi
     ${AVCODEC_NAME} -Wl,-delayload,${AVCODEC_NAME}.dll
     ${AVFORMAT_NAME} -Wl,-delayload,${AVFORMAT_NAME}.dll
     ${AVUTIL_NAME} -Wl,-delayload,${AVUTIL_NAME}.dll

@@ -9,7 +9,7 @@ struct config {
   enum video_format_scaling_algorithm scaling;
   enum config_handle_manage_mode handle_manage_mode;
   bool need_postfix;
-  bool use_audio_index;
+  enum audio_index_mode audio_index_mode;
   bool invert_phase;
   bool modified;
 };
@@ -42,7 +42,7 @@ enum video_format_scaling_algorithm config_get_scaling(struct config const *cons
 
 bool config_get_need_postfix(struct config const *const c) { return c->need_postfix; }
 
-bool config_get_use_audio_index(struct config const *const c) { return c->use_audio_index; }
+enum audio_index_mode config_get_audio_index_mode(struct config const *const c) { return c->audio_index_mode; }
 
 bool config_get_invert_phase(struct config const *const c) { return c->invert_phase; }
 
@@ -126,14 +126,23 @@ NODISCARD error config_set_scaling(struct config *const c, enum video_format_sca
   return eok();
 }
 
-NODISCARD error config_set_use_audio_index(struct config *const c, bool const use_audio_index) {
+NODISCARD error config_set_audio_index_mode(struct config *const c, enum audio_index_mode audio_index_mode) {
   if (!c) {
     return errg(err_invalid_arugment);
   }
-  if (c->use_audio_index == !!use_audio_index) {
+  if (c->audio_index_mode == audio_index_mode) {
     return eok();
   }
-  c->use_audio_index = !!use_audio_index;
+  switch ((int)audio_index_mode) {
+  case aim_noindex:
+  case aim_relax:
+  case aim_strict:
+    break;
+  default:
+    audio_index_mode = aim_noindex;
+    break;
+  }
+  c->audio_index_mode = audio_index_mode;
   c->modified = true;
   return eok();
 }
@@ -221,7 +230,8 @@ static NODISCARD error load(struct config *c) {
     err = ethru(err);
     goto cleanup;
   }
-  err = config_set_use_audio_index(c, GetPrivateProfileIntA("audio", "use_audio_index", 0, filepath.ptr) != 0);
+  err = config_set_audio_index_mode(
+      c, (enum audio_index_mode)(GetPrivateProfileIntA("audio", "audio_index_mode", 0, filepath.ptr)));
   if (efailed(err)) {
     err = ethru(err);
     goto cleanup;
@@ -257,7 +267,7 @@ NODISCARD error config_load(struct config *c) {
   tmp->preferred_decoders = (struct str){0};
   c->need_postfix = tmp->need_postfix;
   c->scaling = tmp->scaling;
-  c->use_audio_index = tmp->use_audio_index;
+  c->audio_index_mode = tmp->audio_index_mode;
   c->invert_phase = tmp->invert_phase;
   c->modified = false;
 cleanup:
@@ -297,7 +307,7 @@ NODISCARD error config_save(struct config *c) {
     goto cleanup;
   }
   if (!WritePrivateProfileStringA(
-          "audio", "use_audio_index", config_get_use_audio_index(c) ? "1" : "0", filepath.ptr)) {
+          "audio", "audio_index_mode", ov_itoa((int64_t)(config_get_audio_index_mode(c)), buf), filepath.ptr)) {
     err = errhr(HRESULT_FROM_WIN32(GetLastError()));
     goto cleanup;
   }

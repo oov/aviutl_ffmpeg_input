@@ -24,4 +24,5 @@ NODISCARD error streammap_read_audio(struct streammap *const smp,
                                      int64_t const start,
                                      size_t const length,
                                      void *const buf,
-                                     int *const written);
+                                     int *const written,
+                                     bool const accurate);

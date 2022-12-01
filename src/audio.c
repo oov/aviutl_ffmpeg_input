@@ -24,7 +24,9 @@ struct audio {
   int swr_buf_written;
 
   int current_samples;
+  enum audio_index_mode index_mode;
   bool jumped;
+  bool wait_index;
 
   int64_t video_start_time;
   int64_t current_sample_pos;
@@ -50,7 +52,7 @@ void audio_get_info(struct audio const *const a, struct info_audio *const ai) {
 
 static inline void calc_current_frame(struct audio *fp) {
   if (fp->jumped) {
-    int64_t pos = fp->idx ? audioidx_get(fp->idx, fp->ffmpeg.packet->pts) : -1;
+    int64_t pos = fp->idx ? audioidx_get(fp->idx, fp->ffmpeg.packet->pts, fp->wait_index) : -1;
     if (pos != -1) {
       // found corrent sample position
       fp->current_sample_pos = pos;
@@ -148,8 +150,12 @@ cleanup:
 
 static inline int imin(int const a, int const b) { return a > b ? b : a; }
 
-NODISCARD error
-audio_read(struct audio *const fp, int64_t const offset, int const length, void *const buf, int *const written) {
+NODISCARD error audio_read(struct audio *const fp,
+                           int64_t const offset,
+                           int const length,
+                           void *const buf,
+                           int *const written,
+                           bool const accurate) {
 #ifndef NDEBUG
   char s[256];
   ov_snprintf(s, 256, "audio_read ofs: %lld / len: %d", offset, length);
@@ -160,6 +166,8 @@ audio_read(struct audio *const fp, int64_t const offset, int const length, void 
   int read = 0;
   int r = 0;
   int64_t readpos = 0;
+
+  fp->wait_index = (fp->index_mode == aim_strict) || accurate;
 
 start:
   if (read == length) {
@@ -260,6 +268,7 @@ NODISCARD error audio_create(struct audio **const app, struct audio_options cons
     return NULL;
   }
   *fp = (struct audio){
+      .index_mode = opt->index_mode,
       .video_start_time = opt->video_start_time,
   };
 
@@ -282,7 +291,7 @@ NODISCARD error audio_create(struct audio **const app, struct audio_options cons
     goto cleanup;
   }
 
-  if (opt->use_audio_index) {
+  if (fp->index_mode != aim_noindex) {
     err = audioidx_create(&fp->idx,
                           &(struct audioidx_create_options){
                               .filepath = opt->filepath,

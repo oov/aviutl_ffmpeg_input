@@ -55,7 +55,8 @@ static BOOL ffmpeg_input_info_get(INPUT_HANDLE ih, INPUT_INFO *iip) {
   return bih.biWidth || wfex.nSamplesPerSec;
 }
 
-static int ffmpeg_input_read_video(INPUT_HANDLE ih, int frame, void *buf) {
+static int ffmpeg_input_read_video_ex(INPUT_HANDLE ih, int frame, void *buf, bool const saving) {
+  (void)saving;
   if (!g_ready) {
     return 0;
   }
@@ -68,17 +69,25 @@ static int ffmpeg_input_read_video(INPUT_HANDLE ih, int frame, void *buf) {
   return (int)wr;
 }
 
-static int ffmpeg_input_read_audio(INPUT_HANDLE ih, int start, int length, void *buf) {
+static int ffmpeg_input_read_video(INPUT_HANDLE ih, int frame, void *buf) {
+  return ffmpeg_input_read_video_ex(ih, frame, buf, aviutl_is_saving());
+}
+
+static int ffmpeg_input_read_audio_ex(INPUT_HANDLE ih, int start, int length, void *buf, bool const saving) {
   if (!g_ready) {
     return 0;
   }
   int wr = 0;
-  error err = streammap_read_audio(g_smp, (intptr_t)ih, (int64_t)start, (size_t)length, buf, &wr);
+  error err = streammap_read_audio(g_smp, (intptr_t)ih, (int64_t)start, (size_t)length, buf, &wr, saving);
   if (efailed(err)) {
     ereport(err);
     return 0;
   }
   return (int)wr;
+}
+
+static int ffmpeg_input_read_audio(INPUT_HANDLE ih, int start, int length, void *buf) {
+  return ffmpeg_input_read_audio_ex(ih, start, length, buf, aviutl_is_saving());
 }
 
 static BOOL ffmpeg_input_close(INPUT_HANDLE ih) {
@@ -264,10 +273,12 @@ struct config_dialog_props {
 
 static wchar_t const config_prop[] = L"config_prop";
 
-static struct {
-  enum video_format_scaling_algorithm const id;
+struct combo_items {
+  int const id;
   wchar_t const *name;
-} const scaling_algorithms[] = {
+};
+
+static struct combo_items const scaling_algorithms[] = {
     {video_format_scaling_algorithm_fast_bilinear, L"fast bilinear"},
     {video_format_scaling_algorithm_bilinear, L"bilinear"},
     {video_format_scaling_algorithm_bicubic, L"bicubic"},
@@ -279,15 +290,21 @@ static struct {
     {video_format_scaling_algorithm_sinc, L"sinc"},
     {video_format_scaling_algorithm_lanczos, L"Lanczos"},
     {video_format_scaling_algorithm_spline, L"natural bicubic spline"},
+    {0},
 };
 
-static struct {
-  enum config_handle_manage_mode const id;
-  wchar_t const *name;
-} const handle_manage_modes[] = {
+static struct combo_items const handle_manage_modes[] = {
     {chmm_normal, L"通常"},
     {chmm_cache, L"ハンドルキャッシュ"},
     {chmm_pool, L"ハンドルプール"},
+    {0},
+};
+
+static struct combo_items const audio_index_modes[] = {
+    {aim_noindex, L"なし"},
+    {aim_relax, L"リラックス"},
+    {aim_strict, L"正確"},
+    {0},
 };
 
 enum config_control {
@@ -296,7 +313,7 @@ enum config_control {
   ID_EDT_DECODERS = 1001,
   ID_CMB_HANDLE_MANAGE_MODE = 1002,
   ID_CMB_SCALING = 2000,
-  ID_CHK_USE_AUDIO_INDEX = 3000,
+  ID_CMB_AUDIO_INDEX_MODE = 3000,
   ID_CHK_INVERT_PHASE = 3001,
 };
 
@@ -314,6 +331,28 @@ static void set_check(HWND const window, int const control_id, bool const checke
   SendMessageW(GetDlgItem(window, control_id), BM_SETCHECK, checked ? BST_CHECKED : BST_UNCHECKED, 0);
 }
 
+static int get_combo(HWND const window, int const control_id, struct combo_items const *items) {
+  size_t const selected_index = (size_t)(SendMessageW(GetDlgItem(window, control_id), CB_GETCURSEL, 0, 0));
+  for (size_t i = 0; items[i].name; ++i) {
+    if (i == selected_index) {
+      return items[i].id;
+    }
+  }
+  return -1;
+}
+
+static void set_combo(HWND const window, int const control_id, struct combo_items const *items, int const selected_id) {
+  HWND h = GetDlgItem(window, control_id);
+  size_t selected_index = 0;
+  for (size_t i = 0; items[i].name; ++i) {
+    SendMessageW(h, CB_ADDSTRING, 0, (LPARAM)items[i].name);
+    if (items[i].id == selected_id) {
+      selected_index = i;
+    }
+  }
+  SendMessageW(h, CB_SETCURSEL, (WPARAM)selected_index, 0);
+}
+
 static INT_PTR CALLBACK config_wndproc(HWND const dlg, UINT const message, WPARAM const wparam, LPARAM const lparam) {
   switch (message) {
   case WM_INITDIALOG: {
@@ -322,31 +361,9 @@ static INT_PTR CALLBACK config_wndproc(HWND const dlg, UINT const message, WPARA
     SetWindowTextW(dlg, "FFmpeg Video Reader " VERSION_WIDE);
     set_check(dlg, ID_CHK_NEED_POSTFIX, config_get_need_postfix(pr->config));
     SetWindowTextA(GetDlgItem(dlg, ID_EDT_DECODERS), config_get_preferred_decoders(pr->config));
-    {
-      HWND h = GetDlgItem(dlg, ID_CMB_HANDLE_MANAGE_MODE);
-      enum config_handle_manage_mode const id = config_get_handle_manage_mode(pr->config);
-      size_t selected_index = 0;
-      for (size_t i = 0, len = sizeof(handle_manage_modes) / sizeof(handle_manage_modes[0]); i < len; ++i) {
-        SendMessageW(h, CB_ADDSTRING, 0, (LPARAM)handle_manage_modes[i].name);
-        if (handle_manage_modes[i].id == id) {
-          selected_index = i;
-        }
-      }
-      SendMessageW(h, CB_SETCURSEL, (WPARAM)selected_index, 0);
-    }
-    {
-      HWND h = GetDlgItem(dlg, ID_CMB_SCALING);
-      enum video_format_scaling_algorithm const id = config_get_scaling(pr->config);
-      size_t selected_index = 0;
-      for (size_t i = 0, len = sizeof(scaling_algorithms) / sizeof(scaling_algorithms[0]); i < len; ++i) {
-        SendMessageW(h, CB_ADDSTRING, 0, (LPARAM)scaling_algorithms[i].name);
-        if (scaling_algorithms[i].id == id) {
-          selected_index = i;
-        }
-      }
-      SendMessageW(h, CB_SETCURSEL, (WPARAM)selected_index, 0);
-    }
-    set_check(dlg, ID_CHK_USE_AUDIO_INDEX, config_get_use_audio_index(pr->config));
+    set_combo(dlg, ID_CMB_HANDLE_MANAGE_MODE, handle_manage_modes, (int)(config_get_handle_manage_mode(pr->config)));
+    set_combo(dlg, ID_CMB_SCALING, scaling_algorithms, (int)(config_get_scaling(pr->config)));
+    set_combo(dlg, ID_CMB_AUDIO_INDEX_MODE, audio_index_modes, (int)(config_get_audio_index_mode(pr->config)));
     set_check(dlg, ID_CHK_INVERT_PHASE, config_get_invert_phase(pr->config));
     return TRUE;
   }
@@ -363,15 +380,11 @@ static INT_PTR CALLBACK config_wndproc(HWND const dlg, UINT const message, WPARA
         err = errg(err_unexpected);
         goto cleanup;
       }
-      {
-        size_t selected_index = (size_t)(SendMessageW(GetDlgItem(dlg, ID_CMB_HANDLE_MANAGE_MODE), CB_GETCURSEL, 0, 0));
-        if (selected_index < sizeof(handle_manage_modes) / sizeof(handle_manage_modes[0])) {
-          err = config_set_handle_manage_mode(pr->config, handle_manage_modes[selected_index].id);
-          if (efailed(err)) {
-            err = ethru(err);
-            goto cleanup;
-          }
-        }
+      err = config_set_handle_manage_mode(
+          pr->config, (enum config_handle_manage_mode)(get_combo(dlg, ID_CMB_HANDLE_MANAGE_MODE, handle_manage_modes)));
+      if (efailed(err)) {
+        err = ethru(err);
+        goto cleanup;
       }
       err = config_set_need_postfix(pr->config, get_check(dlg, ID_CHK_NEED_POSTFIX));
       if (efailed(err)) {
@@ -393,17 +406,14 @@ static INT_PTR CALLBACK config_wndproc(HWND const dlg, UINT const message, WPARA
         err = ethru(err);
         goto cleanup;
       }
-      {
-        size_t selected_index = (size_t)(SendMessageW(GetDlgItem(dlg, ID_CMB_SCALING), CB_GETCURSEL, 0, 0));
-        if (selected_index < sizeof(scaling_algorithms) / sizeof(scaling_algorithms[0])) {
-          err = config_set_scaling(pr->config, scaling_algorithms[selected_index].id);
-          if (efailed(err)) {
-            err = ethru(err);
-            goto cleanup;
-          }
-        }
+      err = config_set_scaling(
+          pr->config, (enum video_format_scaling_algorithm)(get_combo(dlg, ID_CMB_SCALING, scaling_algorithms)));
+      if (efailed(err)) {
+        err = ethru(err);
+        goto cleanup;
       }
-      err = config_set_use_audio_index(pr->config, get_check(dlg, ID_CHK_USE_AUDIO_INDEX));
+      err = config_set_audio_index_mode(
+          pr->config, (enum audio_index_mode)(get_combo(dlg, ID_CMB_AUDIO_INDEX_MODE, audio_index_modes)));
       if (efailed(err)) {
         err = ethru(err);
         goto cleanup;
@@ -499,24 +509,29 @@ cleanup:
 
 #define VIDEO_EXTS "*.mkv;*.avi;*.mov;*.wmv;*.mp4;*.webm;*.mpeg;*.ts;*.mts;*.m2ts"
 // #define AUDIO_EXTS "*.mp3;*.ogg;*.wav;*.aac;*.wma;*.m4a;*.webm;*.opus"
-
-INPUT_PLUGIN_TABLE *get_input_plugin_table(void) {
-  static INPUT_PLUGIN_TABLE table = {
-      .flag = INPUT_PLUGIN_FLAG_VIDEO | INPUT_PLUGIN_FLAG_AUDIO,
-      .name = "FFmpeg Video Reader",
-      .filefilter = "FFmpeg Supported Files (" VIDEO_EXTS ")\0" VIDEO_EXTS "\0",
-      .information = "FFmpeg Video Reader " VERSION,
-      .func_init = ffmpeg_input_init,
-      .func_exit = ffmpeg_input_exit,
-      .func_open = ffmpeg_input_open,
-      .func_close = ffmpeg_input_close,
-      .func_info_get = ffmpeg_input_info_get,
-      .func_read_video = ffmpeg_input_read_video,
-      .func_read_audio = ffmpeg_input_read_audio,
-      // .func_is_keyframe = ffmpeg_input_is_keyframe,
-      .func_config = ffmpeg_input_config,
-  };
-  return &table;
-}
-
+static INPUT_PLUGIN_TABLE g_input_plugin_table = {
+    .flag = INPUT_PLUGIN_FLAG_VIDEO | INPUT_PLUGIN_FLAG_AUDIO,
+    .name = "FFmpeg Video Reader",
+    .filefilter = "FFmpeg Supported Files (" VIDEO_EXTS ")\0" VIDEO_EXTS "\0",
+    .information = "FFmpeg Video Reader " VERSION,
+    .func_init = ffmpeg_input_init,
+    .func_exit = ffmpeg_input_exit,
+    .func_open = ffmpeg_input_open,
+    .func_close = ffmpeg_input_close,
+    .func_info_get = ffmpeg_input_info_get,
+    .func_read_video = ffmpeg_input_read_video,
+    .func_read_audio = ffmpeg_input_read_audio,
+    // .func_is_keyframe = ffmpeg_input_is_keyframe,
+    .func_config = ffmpeg_input_config,
+};
 #undef VIDEO_EXTS
+
+INPUT_PLUGIN_TABLE *get_input_plugin_table(void) { return &g_input_plugin_table; }
+
+static struct own_api const g_own_api = {
+    .original_api = &g_input_plugin_table,
+    .func_read_video_ex = ffmpeg_input_read_video_ex,
+    .func_read_audio_ex = ffmpeg_input_read_audio_ex,
+};
+
+struct own_api const *get_own_api_endpoint(void) { return &g_own_api; }

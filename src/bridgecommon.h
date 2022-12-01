@@ -71,6 +71,7 @@ struct PACKED bridge_event_read_request {
   uint64_t id;
   int32_t start;
   int32_t length; // 0 = video, other = audio
+  int32_t saving;
 };
 
 struct PACKED bridge_event_read_response {

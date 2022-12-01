@@ -224,7 +224,7 @@ cleanup:
   return resp ? TRUE : FALSE;
 }
 
-static NODISCARD error call_read(INPUT_HANDLE ih, int start, int length, void *buf, int *written) {
+static NODISCARD error call_read(INPUT_HANDLE ih, int start, int length, void *buf, int *written, bool const saving) {
   if (!ih || !buf || !written) {
     return errg(err_invalid_arugment);
   }
@@ -242,6 +242,7 @@ static NODISCARD error call_read(INPUT_HANDLE ih, int start, int length, void *b
                                    .id = h->id,
                                    .start = (int32_t)start,
                                    .length = (int32_t)length,
+                                   .saving = saving ? 1 : 0,
                                },
                        },
                        &r);
@@ -286,14 +287,38 @@ cleanup:
   return err;
 }
 
-static int ffmpeg_input_read_video(INPUT_HANDLE ih, int frame, void *buf) {
+static int ffmpeg_input_read_video_ex(INPUT_HANDLE ih, int frame, void *buf, bool const saving) {
   if (atomic_load(&g_running_state) != rs_running || !ih) {
     return 0;
   }
   mtx_lock(&g_handles_mtx);
   error err = eok();
   int written = 0;
-  err = call_read(ih, frame, 0, buf, &written);
+  err = call_read(ih, frame, 0, buf, &written, saving);
+  if (efailed(err)) {
+    err = ethru(err);
+    goto cleanup;
+  }
+cleanup:
+  if (efailed(err)) {
+    ereport(err);
+  }
+  mtx_unlock(&g_handles_mtx);
+  return written;
+}
+
+static int ffmpeg_input_read_video(INPUT_HANDLE ih, int frame, void *buf) {
+  return ffmpeg_input_read_video_ex(ih, frame, buf, aviutl_is_saving());
+}
+
+static int ffmpeg_input_read_audio_ex(INPUT_HANDLE ih, int start, int length, void *buf, bool const saving) {
+  if (atomic_load(&g_running_state) != rs_running || !ih) {
+    return 0;
+  }
+  mtx_lock(&g_handles_mtx);
+  error err = eok();
+  int written = 0;
+  err = call_read(ih, start, length, buf, &written, saving);
   if (efailed(err)) {
     err = ethru(err);
     goto cleanup;
@@ -307,23 +332,7 @@ cleanup:
 }
 
 static int ffmpeg_input_read_audio(INPUT_HANDLE ih, int start, int length, void *buf) {
-  if (atomic_load(&g_running_state) != rs_running || !ih) {
-    return 0;
-  }
-  mtx_lock(&g_handles_mtx);
-  error err = eok();
-  int written = 0;
-  err = call_read(ih, start, length, buf, &written);
-  if (efailed(err)) {
-    err = ethru(err);
-    goto cleanup;
-  }
-cleanup:
-  if (efailed(err)) {
-    ereport(err);
-  }
-  mtx_unlock(&g_handles_mtx);
-  return written;
+  return ffmpeg_input_read_audio_ex(ih, start, length, buf, aviutl_is_saving());
 }
 
 static NODISCARD error call_close(struct ipcclient *const ipcc, uint64_t const id) {
@@ -715,24 +724,29 @@ static BOOL ffmpeg_input_exit(void) {
 
 #define VIDEO_EXTS "*.mp4;*.mkv;*.avi;*.mov;*.wmv;*.webm;*.mpeg;*.ts;*.mts;*.m2ts"
 // #define AUDIO_EXTS "*.mp3;*.ogg;*.wav;*.aac;*.wma;*.m4a;*.webm;*.opus"
-
-INPUT_PLUGIN_TABLE *get_input_plugin_bridge_table(void) {
-  static INPUT_PLUGIN_TABLE table = {
-      .flag = INPUT_PLUGIN_FLAG_VIDEO | INPUT_PLUGIN_FLAG_AUDIO,
-      .name = "FFmpeg Video Reader Bridge",
-      .filefilter = "FFmpeg Supported Files (" VIDEO_EXTS ")\0" VIDEO_EXTS "\0",
-      .information = "FFmpeg Video Reader Bridge " VERSION,
-      .func_init = ffmpeg_input_init,
-      .func_exit = ffmpeg_input_exit,
-      .func_open = ffmpeg_input_open,
-      .func_close = ffmpeg_input_close,
-      .func_info_get = ffmpeg_input_info_get,
-      .func_read_video = ffmpeg_input_read_video,
-      .func_read_audio = ffmpeg_input_read_audio,
-      // .func_is_keyframe = ffmpeg_input_is_keyframe,
-      .func_config = ffmpeg_input_config,
-  };
-  return &table;
-}
-
+static INPUT_PLUGIN_TABLE g_input_plugin_bridge_table = {
+    .flag = INPUT_PLUGIN_FLAG_VIDEO | INPUT_PLUGIN_FLAG_AUDIO,
+    .name = "FFmpeg Video Reader Bridge",
+    .filefilter = "FFmpeg Supported Files (" VIDEO_EXTS ")\0" VIDEO_EXTS "\0",
+    .information = "FFmpeg Video Reader Bridge " VERSION,
+    .func_init = ffmpeg_input_init,
+    .func_exit = ffmpeg_input_exit,
+    .func_open = ffmpeg_input_open,
+    .func_close = ffmpeg_input_close,
+    .func_info_get = ffmpeg_input_info_get,
+    .func_read_video = ffmpeg_input_read_video,
+    .func_read_audio = ffmpeg_input_read_audio,
+    // .func_is_keyframe = ffmpeg_input_is_keyframe,
+    .func_config = ffmpeg_input_config,
+};
 #undef VIDEO_EXTS
+
+INPUT_PLUGIN_TABLE *get_input_plugin_bridge_table(void) { return &g_input_plugin_bridge_table; }
+
+static struct own_api const g_own_bridge_api = {
+    .original_api = &g_input_plugin_bridge_table,
+    .func_read_video_ex = ffmpeg_input_read_video_ex,
+    .func_read_audio_ex = ffmpeg_input_read_audio_ex,
+};
+
+struct own_api const *get_own_api_bridge_endpoint(void) { return &g_own_bridge_api; }

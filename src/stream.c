@@ -78,7 +78,7 @@ static NODISCARD error create_audio(struct stream *sp, struct audio **a) {
                                .handle = sp->file,
                                .preferred_decoders = config_get_preferred_decoders(sp->config),
                                .video_start_time = sp->video_start_time,
-                               .use_audio_index = config_get_use_audio_index(sp->config),
+                               .index_mode = config_get_audio_index_mode(sp->config),
                            });
   if (efailed(err)) {
     err = ethru(err);
@@ -270,8 +270,12 @@ cleanup:
   return err;
 }
 
-static NODISCARD error stream_read_audio(
-    struct stream *const sp, int64_t const start, size_t const length, void *const buf, int *const written) {
+static NODISCARD error stream_read_audio(struct stream *const sp,
+                                         int64_t const start,
+                                         size_t const length,
+                                         void *const buf,
+                                         int *const written,
+                                         bool const accurate) {
   if (!sp || !buf || !length) {
     return errg(err_invalid_arugment);
   }
@@ -284,7 +288,7 @@ static NODISCARD error stream_read_audio(
     }
   }
   int wr = 0;
-  err = audio_read(sp->a, start, (int)length, buf, &wr);
+  err = audio_read(sp->a, start, (int)length, buf, &wr, accurate);
   if (efailed(err)) {
     err = ethru(err);
     goto cleanup;
@@ -638,10 +642,11 @@ NODISCARD error streammap_read_audio(struct streammap *const smp,
                                      int64_t const start,
                                      size_t const length,
                                      void *const buf,
-                                     int *const written) {
+                                     int *const written,
+                                     bool const accurate) {
   struct stream *const sp = get_stream(smp, idx);
   if (!sp) {
     return errg(err_invalid_arugment);
   }
-  return stream_read_audio(sp, start, length, buf, written);
+  return stream_read_audio(sp, start, length, buf, written, accurate);
 }
