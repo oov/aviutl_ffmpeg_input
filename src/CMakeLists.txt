@@ -40,6 +40,7 @@ add_library(ffmpeg_input SHARED
   ipcserver.c
   main.c
   mapped.c
+  now.c
   process.c
   stream.c
   video.c

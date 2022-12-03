@@ -4,6 +4,10 @@
 
 #define ENABLE_BENCHMARK 0
 
+#if ENABLE_BENCHMARK
+#  include "now.h"
+#endif
+
 struct mapped {
   HANDLE file;
   HANDLE map;
@@ -18,25 +22,6 @@ struct mapped {
 static int64_t const mapping_size = 32 * 1024 * 1024;
 
 static inline int64_t i64min(int64_t const a, int64_t const b) { return a > b ? b : a; }
-
-#if ENABLE_BENCHMARK
-static double get_freq(void) {
-  static double freq = 0.;
-  if (freq > 0.) {
-    return freq;
-  }
-  LARGE_INTEGER f;
-  QueryPerformanceFrequency(&f);
-  freq = (double)(f.QuadPart);
-  return freq;
-}
-
-static double now(void) {
-  LARGE_INTEGER c;
-  QueryPerformanceCounter(&c);
-  return (double)(c.QuadPart) / get_freq();
-}
-#endif
 
 int mapped_read(struct mapped *const mp, void *const buf, int const buf_size) {
   if (!mp || !buf || !buf_size) {
