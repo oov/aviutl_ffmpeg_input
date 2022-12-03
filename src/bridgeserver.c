@@ -59,7 +59,7 @@ static void ipc_handler_open(struct ipcserver_context *const ctx) {
         err_type_generic, err_invalid_arugment, &native_unmanaged_const(NSTR("open request packet size too small")));
     goto cleanup;
   }
-  if (!g_api->original_api->func_open) {
+  if (!g_api->func_open_ex) {
     err =
         emsg(err_type_generic, err_not_implemented_yet, &native_unmanaged_const(NSTR("func_open is not implemented")));
     goto cleanup;
@@ -75,9 +75,9 @@ static void ipc_handler_open(struct ipcserver_context *const ctx) {
     err = ethru(err);
     goto cleanup;
   }
-  ih = g_api->original_api->func_open(filepath.ptr);
-  if (!ih) {
-    err = emsg(err_type_generic, err_fail, &native_unmanaged_const(NSTR("func_open failed")));
+  int eno = g_api->func_open_ex(filepath.ptr, &ih);
+  if (eno) {
+    err = emsg(err_type_errno, eno, &native_unmanaged_const(NSTR("func_open failed")));
     goto cleanup;
   }
   if (g_api->original_api->func_info_get(ih, &ii)) {

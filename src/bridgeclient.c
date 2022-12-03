@@ -435,26 +435,30 @@ cleanup:
   return err;
 }
 
-static INPUT_HANDLE ffmpeg_input_open(char *filepath) {
-  if (atomic_load(&g_running_state) != rs_running || !filepath) {
-    return NULL;
+static int ffmpeg_input_open_ex(char const *filepath, INPUT_HANDLE *ih) {
+  if (atomic_load(&g_running_state) != rs_running || !filepath || !ih) {
+    return EINVAL;
   }
   mtx_lock(&g_handles_mtx);
+  int eno = 0;
   error err = eok();
   struct handle *h = NULL;
   struct handle tmp = {0};
   err = call_open(g_ipcc, filepath, &tmp);
   if (efailed(err)) {
+    eno = EIO;
     err = ethru(err);
     goto cleanup;
   }
   err = mem(&h, 1, sizeof(struct handle));
   if (efailed(err)) {
+    eno = ENOMEM;
     err = ethru(err);
     goto cleanup;
   }
   err = scpy(&tmp.filepath, filepath);
   if (efailed(err)) {
+    eno = EIO;
     err = ethru(err);
     goto cleanup;
   }
@@ -465,9 +469,11 @@ static INPUT_HANDLE ffmpeg_input_open(char *filepath) {
               }),
               NULL);
   if (efailed(err)) {
+    eno = ENOMEM;
     err = ethru(err);
     goto cleanup;
   }
+  *ih = (INPUT_HANDLE)h;
 cleanup:
   if (efailed(err)) {
     if (h) {
@@ -479,10 +485,20 @@ cleanup:
     if (tmp.filepath.ptr) {
       ereport(sfree(&tmp.filepath));
     }
-    ereport(err);
+    if (eis(err, err_type_errno, ECANCELED)) {
+      efree(&err);
+    } else {
+      ereport(err);
+    }
   }
   mtx_unlock(&g_handles_mtx);
-  return (INPUT_HANDLE)h;
+  return eno;
+}
+
+static INPUT_HANDLE ffmpeg_input_open(char *filepath) {
+  INPUT_HANDLE ih = NULL;
+  ffmpeg_input_open_ex(filepath, &ih);
+  return ih;
 }
 
 static void process_finished(void *userdata);
@@ -745,6 +761,7 @@ INPUT_PLUGIN_TABLE *get_input_plugin_bridge_table(void) { return &g_input_plugin
 
 static struct own_api const g_own_bridge_api = {
     .original_api = &g_input_plugin_bridge_table,
+    .func_open_ex = ffmpeg_input_open_ex,
     .func_read_video_ex = ffmpeg_input_read_video_ex,
     .func_read_audio_ex = ffmpeg_input_read_audio_ex,
 };

@@ -102,19 +102,30 @@ static BOOL ffmpeg_input_close(INPUT_HANDLE ih) {
   return TRUE;
 }
 
-static INPUT_HANDLE ffmpeg_input_open(char *filepath) {
+static int ffmpeg_input_open_ex(char const *filepath, INPUT_HANDLE *ih) {
+  if (!filepath || !ih) {
+    return EINVAL;
+  }
   if (!g_ready) {
-    return NULL;
+    return EACCES;
   }
   struct wstr ws = {0};
   intptr_t idx = 0;
+  int eno = 0;
   error err = from_mbcs(&str_unmanaged_const(filepath), &ws);
   if (efailed(err)) {
+    eno = EINVAL;
     err = ethru(err);
     goto cleanup;
   }
   err = streammap_create_stream(g_smp, ws.ptr, &idx);
   if (efailed(err)) {
+    if (eisg(err, err_abort)) {
+      eno = ECANCELED;
+      efree(&err);
+      goto cleanup;
+    }
+    eno = EIO;
     err = ethru(err);
     goto cleanup;
   }
@@ -122,9 +133,15 @@ cleanup:
   ereport(sfree(&ws));
   if (efailed(err)) {
     ereport(err);
-    return NULL;
   }
-  return (INPUT_HANDLE)idx;
+  *ih = (INPUT_HANDLE)idx;
+  return eno;
+}
+
+static INPUT_HANDLE ffmpeg_input_open(char *filepath) {
+  INPUT_HANDLE ih = NULL;
+  ffmpeg_input_open_ex(filepath, &ih);
+  return ih;
 }
 
 static HANDLE ffmpeg_dll_handles[5] = {0};
@@ -530,6 +547,7 @@ INPUT_PLUGIN_TABLE *get_input_plugin_table(void) { return &g_input_plugin_table;
 
 static struct own_api const g_own_api = {
     .original_api = &g_input_plugin_table,
+    .func_open_ex = ffmpeg_input_open_ex,
     .func_read_video_ex = ffmpeg_input_read_video_ex,
     .func_read_audio_ex = ffmpeg_input_read_audio_ex,
 };

@@ -47,6 +47,7 @@ static inline HWND find_aviutl_window(void) {
 
 struct own_api {
   INPUT_PLUGIN_TABLE *original_api;
+  int (*func_open_ex)(char const *filepath, INPUT_HANDLE *ih);
   int (*func_read_video_ex)(INPUT_HANDLE ih, int frame, void *buf, bool const saving);
   int (*func_read_audio_ex)(INPUT_HANDLE ih, int start, int length, void *buf, bool const saving);
 };
