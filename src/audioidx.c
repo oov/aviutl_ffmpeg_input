@@ -55,6 +55,7 @@ static int indexer(void *userdata) {
   }
 
   int64_t const video_start_time = av_rescale_q(ip->video_start_time, AV_TIME_BASE_Q, fs.stream->time_base);
+  int64_t const duration = av_rescale_q(fs.fctx->duration, AV_TIME_BASE_Q, fs.stream->time_base);
 
   mtx_lock(&ip->mtx);
   ictx->err = eok();
@@ -114,7 +115,7 @@ static int indexer(void *userdata) {
       OutputDebugStringA(s);
     }
 #endif
-    int const current_progress = (int)((10 * fs.packet->pts) / fs.stream->duration);
+    int const current_progress = (int)((10 * fs.packet->pts) / duration);
     if (current_progress != progress) {
 #ifndef NDEBUG
       char s[256];
