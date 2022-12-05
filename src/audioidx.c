@@ -1,6 +1,7 @@
 #include "audioidx.h"
 
 #include "ffmpeg.h"
+#include "now.h"
 
 #include "ovthreads.h"
 
@@ -65,7 +66,8 @@ static int indexer(void *userdata) {
   mtx_unlock(&ip->mtx);
 
   int64_t samples = AV_NOPTS_VALUE;
-  int progress = 0;
+  static double const interval = 0.05;
+  double time = now() + interval;
   enum indexer_state last_indexer_state = is_running;
   while (last_indexer_state == is_running) {
     int r = ffmpeg_read_packet(&fs);
@@ -92,16 +94,6 @@ static int indexer(void *userdata) {
       samples =
           av_rescale_q(fs.packet->pts - video_start_time, fs.stream->time_base, av_make_q(1, fs.cctx->sample_rate));
     }
-    mtx_lock(&ip->mtx);
-    err = hmset(&ip->ptsmap, (&(struct item){.key = fs.packet->pts, .pos = samples}), NULL);
-    ip->created_pts = fs.packet->pts;
-    last_indexer_state = ip->indexer_state;
-    cnd_signal(&ip->cnd);
-    mtx_unlock(&ip->mtx);
-    if (efailed(err)) {
-      err = ethru(err);
-      goto cleanup;
-    }
     int64_t const packet_samples =
         av_get_audio_frame_duration(fs.cctx, fs.packet->size ? fs.packet->size : fs.cctx->frame_size);
     if (!packet_samples) {
@@ -115,14 +107,28 @@ static int indexer(void *userdata) {
       OutputDebugStringA(s);
     }
 #endif
-    int const current_progress = (int)((10 * fs.packet->pts) / duration);
-    if (current_progress != progress) {
+    bool update_progress = false;
+    double const n = now();
+    if (n > time) {
+      time = n + interval;
+      update_progress = true;
 #ifndef NDEBUG
       char s[256];
-      ov_snprintf(s, 256, "aidx: %d%%", current_progress * 10);
+      wsprintfA(s, "aidx: %d%%", (int)((100 * fs.packet->pts) / duration));
       OutputDebugStringA(s);
 #endif
-      progress = current_progress;
+    }
+    mtx_lock(&ip->mtx);
+    err = hmset(&ip->ptsmap, (&(struct item){.key = fs.packet->pts, .pos = samples}), NULL);
+    ip->created_pts = fs.packet->pts;
+    last_indexer_state = ip->indexer_state;
+    if (update_progress) {
+      cnd_signal(&ip->cnd);
+    }
+    mtx_unlock(&ip->mtx);
+    if (efailed(err)) {
+      err = ethru(err);
+      goto cleanup;
     }
     samples += packet_samples;
   }
