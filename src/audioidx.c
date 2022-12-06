@@ -17,11 +17,6 @@ struct item {
   int64_t pos;
 };
 
-enum indexer_state {
-  is_stop,
-  is_running,
-};
-
 struct audioidx {
   struct wstr filepath;
   void *handle;
@@ -32,7 +27,7 @@ struct audioidx {
   int64_t video_start_time;
   int64_t created_pts;
   thrd_t indexer;
-  enum indexer_state indexer_state;
+  bool indexer_running;
 };
 
 struct indexer_context {
@@ -56,7 +51,9 @@ static int indexer(void *userdata) {
   }
 
   int64_t const video_start_time = av_rescale_q(ip->video_start_time, AV_TIME_BASE_Q, fs.stream->time_base);
+#ifndef NDEBUG
   int64_t const duration = av_rescale_q(fs.fctx->duration, AV_TIME_BASE_Q, fs.stream->time_base);
+#endif
 
   mtx_lock(&ip->mtx);
   ictx->err = eok();
@@ -68,8 +65,8 @@ static int indexer(void *userdata) {
   int64_t samples = AV_NOPTS_VALUE;
   static double const interval = 0.05;
   double time = now() + interval;
-  enum indexer_state last_indexer_state = is_running;
-  while (last_indexer_state == is_running) {
+  bool indexer_running = true;
+  while (indexer_running) {
     int r = ffmpeg_read_packet(&fs);
     if (r < 0) {
       if (r == AVERROR_EOF) {
@@ -121,7 +118,7 @@ static int indexer(void *userdata) {
     mtx_lock(&ip->mtx);
     err = hmset(&ip->ptsmap, (&(struct item){.key = fs.packet->pts, .pos = samples}), NULL);
     ip->created_pts = fs.packet->pts;
-    last_indexer_state = ip->indexer_state;
+    indexer_running = ip->indexer_running;
     if (update_progress) {
       cnd_signal(&ip->cnd);
     }
@@ -164,7 +161,7 @@ NODISCARD error audioidx_create(struct audioidx **const ipp, struct audioidx_cre
   *ip = (struct audioidx){
       .handle = opt->handle,
       .video_start_time = opt->video_start_time,
-      .indexer_state = is_stop,
+      .indexer_running = false,
   };
   mtx_init(&ip->mtx, mtx_plain | mtx_recursive);
   cnd_init(&ip->cnd);
@@ -196,8 +193,8 @@ void audioidx_destroy(struct audioidx **const ipp) {
   }
   struct audioidx *ip = *ipp;
   mtx_lock(&ip->mtx);
-  bool const already_running = ip->indexer_state == is_running;
-  ip->indexer_state = is_stop;
+  bool const already_running = ip->indexer_running;
+  ip->indexer_running = false;
   mtx_unlock(&ip->mtx);
   if (already_running) {
     thrd_join(ip->indexer, NULL);
@@ -214,9 +211,9 @@ static NODISCARD error start_thread(struct audioidx *const ip) {
       .ip = ip,
       .err = eok(),
   };
-  ip->indexer_state = is_running;
+  ip->indexer_running = true;
   if (thrd_create(&ip->indexer, indexer, &ictx) != thrd_success) {
-    ip->indexer_state = is_stop;
+    ip->indexer_running = false;
     goto cleanup;
   }
   while (ictx.ip) {
@@ -233,7 +230,7 @@ int64_t audioidx_get(struct audioidx *const ip, int64_t const pts, bool const wa
   error err = eok();
   int64_t pos = -1;
   mtx_lock(&ip->mtx);
-  if (ip->indexer_state != is_running) {
+  if (!ip->indexer_running) {
     err = start_thread(ip);
     if (efailed(err)) {
       err = ethru(err);
