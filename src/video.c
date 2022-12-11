@@ -1,12 +1,16 @@
 #include "video.h"
 
-#ifndef NDEBUG
-#  include <ovprintf.h>
-#endif
-
+#include <ovprintf.h>
 #include <ovutil/win32.h>
 
 #include "ffmpeg.h"
+#include "now.h"
+
+#define SHOWLOG_VIDEO_GET_INFO 0
+#define SHOWLOG_VIDEO_CURRENT_FRAME 0
+#define SHOWLOG_VIDEO_SEEK 0
+#define SHOWLOG_VIDEO_SEEK_SPEED 0
+#define SHOWLOG_VIDEO_READ 0
 
 static bool const is_output_yuy2 = true;
 
@@ -26,7 +30,7 @@ void video_get_info(struct video const *const v, struct info_video *const vi) {
   vi->frame_rate = v->ffmpeg.stream->avg_frame_rate.num;
   vi->frame_scale = v->ffmpeg.stream->avg_frame_rate.den;
   vi->frames = av_rescale_q(v->ffmpeg.fctx->duration, v->ffmpeg.stream->avg_frame_rate, av_inv_q(AV_TIME_BASE_Q));
-#ifndef NDEBUG
+#if SHOWLOG_VIDEO_GET_INFO
   char s[256];
   ov_snprintf(s,
               256,
@@ -42,7 +46,7 @@ static inline void calc_current_frame(struct video *fp) {
   fp->current_frame = av_rescale_q(fp->ffmpeg.frame->pts - fp->ffmpeg.stream->start_time,
                                    fp->ffmpeg.stream->avg_frame_rate,
                                    av_inv_q(fp->ffmpeg.stream->time_base));
-#ifndef NDEBUG
+#if SHOWLOG_VIDEO_CURRENT_FRAME
   char s[256];
   ov_snprintf(s,
               256,
@@ -68,9 +72,12 @@ cleanup:
 }
 
 static NODISCARD error seek(struct video *fp, int frame) {
+#if SHOWLOG_VIDEO_SEEK_SPEED
+  double const start = now();
+#endif
   error err = eok();
   int64_t time_stamp = av_rescale_q(frame, av_inv_q(fp->ffmpeg.stream->time_base), fp->ffmpeg.stream->avg_frame_rate);
-#ifndef NDEBUG
+#if SHOWLOG_VIDEO_SEEK
   char s[256];
   ov_snprintf(s,
               256,
@@ -105,7 +112,15 @@ static NODISCARD error seek(struct video *fp, int frame) {
       goto cleanup;
     }
   }
-cleanup:
+cleanup :
+#if SHOWLOG_VIDEO_SEEK_SPEED
+{
+  double const end = now();
+  char s[256];
+  ov_snprintf(s, 256, "v seek: %0.4fs", end - start);
+  OutputDebugStringA(s);
+}
+#endif
   return err;
 }
 
@@ -115,7 +130,7 @@ NODISCARD error video_read(struct video *const fp, int64_t frame, void *buf, siz
   }
 
   error err = eok();
-#ifndef NDEBUG
+#if SHOWLOG_VIDEO_READ
   char s[256];
   wsprintfA(s, "reqframe: %d / now: %d", frame, (int)fp->current_frame);
   OutputDebugStringA(s);

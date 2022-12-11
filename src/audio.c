@@ -1,13 +1,17 @@
 #include "audio.h"
 
-#ifndef NDEBUG
-#  include <ovprintf.h>
-#endif
+#include <ovprintf.h>
+#include <ovutil/win32.h>
 
 #include "audioidx.h"
 #include "ffmpeg.h"
+#include "now.h"
 
-#include <ovutil/win32.h>
+#define SHOWLOG_AUDIO_GET_INFO 0
+#define SHOWLOG_AUDIO_CURRENT_FRAME 0
+#define SHOWLOG_AUDIO_SEEK 0
+#define SHOWLOG_AUDIO_SEEK_SPEED 0
+#define SHOWLOG_AUDIO_READ 0
 
 typedef int16_t sample_t;
 static int const g_channels = 2;
@@ -38,7 +42,7 @@ void audio_get_info(struct audio const *const a, struct info_audio *const ai) {
   ai->channels = g_channels;
   ai->bit_depth = sizeof(sample_t) * 8;
   ai->samples = av_rescale_q(a->ffmpeg.fctx->duration, AV_TIME_BASE_Q, av_make_q(1, a->ffmpeg.cctx->sample_rate));
-#ifndef NDEBUG
+#if SHOWLOG_AUDIO_GET_INFO
   char s[256];
   ov_snprintf(s,
               256,
@@ -72,7 +76,7 @@ static inline void calc_current_frame(struct audio *fp) {
     fp->current_sample_pos += fp->ffmpeg.frame->nb_samples;
   }
   fp->current_samples = fp->ffmpeg.frame->nb_samples;
-#ifndef NDEBUG
+#if SHOWLOG_AUDIO_CURRENT_FRAME
   char s[256];
   ov_snprintf(s,
               256,
@@ -98,10 +102,13 @@ cleanup:
 }
 
 static NODISCARD error seek(struct audio *fp, int64_t sample) {
+#if SHOWLOG_AUDIO_SEEK_SPEED
+  double const start = now();
+#endif
   error err = eok();
   int64_t time_stamp =
       av_rescale_q(sample, av_inv_q(fp->ffmpeg.stream->time_base), av_make_q(fp->ffmpeg.cctx->sample_rate, 1));
-#ifndef NDEBUG
+#if SHOWLOG_AUDIO_SEEK
   {
     char s[256];
     ov_snprintf(s,
@@ -133,7 +140,7 @@ static NODISCARD error seek(struct audio *fp, int64_t sample) {
     break;
   }
   while (fp->current_sample_pos + fp->ffmpeg.frame->nb_samples < sample) {
-#ifndef NDEBUG
+#if SHOWLOG_AUDIO_SEEK
     char s[256];
     ov_snprintf(s, 256, "csp: %lld / smp: %lld", fp->current_sample_pos + fp->ffmpeg.frame->nb_samples, sample);
     OutputDebugStringA(s);
@@ -144,7 +151,15 @@ static NODISCARD error seek(struct audio *fp, int64_t sample) {
       goto cleanup;
     }
   }
-cleanup:
+cleanup :
+#if SHOWLOG_AUDIO_SEEK_SPEED
+{
+  double const end = now();
+  char s[256];
+  ov_snprintf(s, 256, "a seek: %0.4fs", end - start);
+  OutputDebugStringA(s);
+}
+#endif
   return err;
 }
 
@@ -156,7 +171,7 @@ NODISCARD error audio_read(struct audio *const fp,
                            void *const buf,
                            int *const written,
                            bool const accurate) {
-#ifndef NDEBUG
+#if SHOWLOG_AUDIO_READ
   char s[256];
   ov_snprintf(s, 256, "audio_read ofs: %lld / len: %d", offset, length);
   OutputDebugStringA(s);
