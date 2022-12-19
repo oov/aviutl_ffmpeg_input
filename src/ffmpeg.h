@@ -55,10 +55,15 @@ struct ffmpeg_open_options {
   wchar_t const *filepath;
   void *handle;
   size_t buffer_size;
+
+  // these are used in ffmpeg_open.
   enum AVMediaType media_type;
   char const *preferred_decoders;
 };
 
+AVStream *ffmpeg_find_stream(struct ffmpeg_stream *const fs, enum AVMediaType media_type);
+
+NODISCARD error ffmpeg_open_without_codec(struct ffmpeg_stream *const fs, struct ffmpeg_open_options const *const opt);
 NODISCARD error ffmpeg_open(struct ffmpeg_stream *const fs, struct ffmpeg_open_options const *const opt);
 void ffmpeg_close(struct ffmpeg_stream *const fs);
 

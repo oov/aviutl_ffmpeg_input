@@ -39,16 +39,17 @@ static int indexer(void *userdata) {
   struct indexer_context *ictx = userdata;
   struct audioidx *ip = ictx->ip;
   struct ffmpeg_stream fs = {0};
-  error err = ffmpeg_open(&fs,
-                          &(struct ffmpeg_open_options){
-                              .filepath = ip->filepath.ptr,
-                              .handle = ip->handle,
-                              .media_type = AVMEDIA_TYPE_AUDIO,
-                          });
+  error err = ffmpeg_open_without_codec(&fs,
+                                        &(struct ffmpeg_open_options){
+                                            .filepath = ip->filepath.ptr,
+                                            .handle = ip->handle,
+                                        });
   if (efailed(err)) {
     err = ethru(err);
     goto cleanup;
   }
+  // We don't need a decoder, so just assign the stream.
+  fs.stream = ffmpeg_find_stream(&fs, AVMEDIA_TYPE_AUDIO);
 
   int64_t const video_start_time = av_rescale_q(ip->video_start_time, AV_TIME_BASE_Q, fs.stream->time_base);
 #ifndef NDEBUG
@@ -88,11 +89,11 @@ static int indexer(void *userdata) {
                   video_start_time);
       OutputDebugStringA(s);
 #endif
-      samples =
-          av_rescale_q(fs.packet->pts - video_start_time, fs.stream->time_base, av_make_q(1, fs.cctx->sample_rate));
+      samples = av_rescale_q(
+          fs.packet->pts - video_start_time, fs.stream->time_base, av_make_q(1, fs.stream->codecpar->sample_rate));
     }
-    int64_t const packet_samples =
-        av_get_audio_frame_duration(fs.cctx, fs.packet->size ? fs.packet->size : fs.cctx->frame_size);
+    int64_t const packet_samples = av_get_audio_frame_duration2(
+        fs.stream->codecpar, fs.packet->size ? fs.packet->size : fs.stream->codecpar->frame_size);
     if (!packet_samples) {
       err = errg(err_fail);
       goto cleanup;
