@@ -124,8 +124,58 @@ cleanup:
   ereport(err);
 }
 
+#if 0
+// TODO: not working as expected
+static void test_byte_seek(void) {
+  struct ffmpeg_stream fs = {0};
+  error err = open_stream(&fs, L"15secs.mkv");
+  if (!TEST_SUCCEEDED_F(err)) {
+    goto cleanup;
+  }
+  int64_t const time_stamp = av_rescale_q(126, av_inv_q(fs.stream->time_base), fs.stream->avg_frame_rate);
+  if (!TEST_SUCCEEDED_F(ffmpeg_seek(&fs, time_stamp))) {
+    goto cleanup;
+  }
+  if (!TEST_SUCCEEDED_F(ffmpeg_grab(&fs))) {
+    goto cleanup;
+  }
+  if (!TEST_CHECK(fs.packet->pts <= time_stamp)) {
+    goto cleanup;
+  }
+  int64_t bytes_pos = fs.packet->pos;
+  if (!TEST_CHECK(bytes_pos != -1)) {
+    goto cleanup;
+  }
+  if (!TEST_SUCCEEDED_F(ffmpeg_grab(&fs))) {
+    goto cleanup;
+  }
+  int64_t pts = fs.frame->pts;
+  if (!TEST_SUCCEEDED_F(ffmpeg_seek_bytes(&fs, bytes_pos))) {
+    goto cleanup;
+  }
+  if (!TEST_SUCCEEDED_F(ffmpeg_grab(&fs))) {
+    goto cleanup;
+  }
+  if (!TEST_CHECK(fs.packet->pos == bytes_pos)) {
+    TEST_MSG("fs.packet->pos = %lld, bytes_pos = %lld", fs.packet->pos, bytes_pos);
+    goto cleanup;
+  }
+  if (!TEST_SUCCEEDED_F(ffmpeg_grab(&fs))) {
+    goto cleanup;
+  }
+  if (!TEST_CHECK(pts == fs.frame->pts)) {
+    goto cleanup;
+  }
+
+cleanup:
+  ffmpeg_close(&fs);
+  ereport(err);
+}
+#endif
+
 TEST_LIST = {
     {"test_find_preferred", test_find_preferred},
     {"test_seek", test_seek},
+    // {"test_byte_seek", test_byte_seek},
     {NULL, NULL},
 };

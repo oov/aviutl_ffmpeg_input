@@ -384,7 +384,9 @@ NODISCARD error ffmpeg_open_without_codec(struct ffmpeg_stream *const fs, struct
     err = errffmpeg(r);
     goto cleanup;
   }
+#if 0
   OutputDebugStringA(fctx->iformat->flags & AVFMT_NO_BYTE_SEEK ? "no byte seek" : "support byte seek");
+#endif
   r = avformat_find_stream_info(fctx, NULL);
   if (r < 0) {
     err = errffmpeg(r);
@@ -478,6 +480,18 @@ NODISCARD error ffmpeg_seek(struct ffmpeg_stream *const fs, int64_t const timest
   avcodec_flush_buffers(fs->cctx);
   return eok();
 }
+
+#if 0
+// It should work with mkv, but it doesn't seem to work as expected...
+NODISCARD error ffmpeg_seek_bytes(struct ffmpeg_stream *const fs, int64_t const pos) {
+  int const r = avformat_seek_file(fs->fctx, fs->stream->index, INT64_MIN, pos, INT64_MAX, AVSEEK_FLAG_BYTE);
+  if (r < 0) {
+    return errffmpeg(r);
+  }
+  avcodec_flush_buffers(fs->cctx);
+  return eok();
+}
+#endif
 
 static int inline receive_frame(struct ffmpeg_stream *const fs) { return avcodec_receive_frame(fs->cctx, fs->frame); }
 
