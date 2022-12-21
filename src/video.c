@@ -7,6 +7,7 @@
 #include "now.h"
 
 #define SHOWLOG_VIDEO_GET_INFO 0
+#define SHOWLOG_VIDEO_GET_INTRA_INFO 0
 #define SHOWLOG_VIDEO_CURRENT_FRAME 0
 #define SHOWLOG_VIDEO_SEEK 0
 #define SHOWLOG_VIDEO_SEEK_SPEED 0
@@ -19,6 +20,7 @@ struct video {
   struct SwsContext *sws_context;
 
   int64_t current_frame;
+  int64_t current_gop_intra_pts;
   bool yuy2;
 };
 
@@ -59,6 +61,22 @@ static inline void calc_current_frame(struct video *fp) {
               av_q2d(fp->ffmpeg.stream->avg_frame_rate));
   OutputDebugStringA(s);
 #endif
+  if (fp->ffmpeg.frame->key_frame) {
+    fp->current_gop_intra_pts = fp->ffmpeg.frame->pts;
+#if SHOWLOG_VIDEO_GET_INTRA_INFO
+    {
+      char s[256];
+      ov_snprintf(s,
+                  256,
+                  "gop intra pts: %lld packet pts: %lld packet dts: %lld",
+                  fp->ffmpeg.frame->pts,
+                  fp->ffmpeg.packet->pts,
+                  fp->ffmpeg.packet->dts);
+      OutputDebugStringA(s);
+      // current_gop_intra_dts
+    }
+#endif
+  }
 }
 
 static NODISCARD error grab(struct video *fp) {
@@ -136,7 +154,25 @@ NODISCARD error video_read(struct video *const fp, int64_t frame, void *buf, siz
   OutputDebugStringA(s);
 #endif
   int64_t skip = frame - fp->current_frame;
-  if (skip > 100 || skip < 0) {
+  bool need_seek = skip < 0;
+  if (skip > 30) {
+    bool ok = false;
+    if (avformat_index_get_entries_count(fp->ffmpeg.stream) > 1) {
+      // find closest gop intra
+      int64_t const time_stamp =
+          av_rescale_q(frame, av_inv_q(fp->ffmpeg.stream->time_base), fp->ffmpeg.stream->avg_frame_rate);
+      AVIndexEntry const *const idx =
+          avformat_index_get_entry_from_timestamp(fp->ffmpeg.stream, time_stamp, AVSEEK_FLAG_BACKWARD);
+      if (idx) {
+        need_seek = idx->timestamp != fp->current_gop_intra_pts;
+        ok = true;
+      }
+    }
+    if (!ok) {
+      need_seek = skip > 100;
+    }
+  }
+  if (need_seek) {
     err = seek(fp, (int)frame);
     if (efailed(err)) {
       err = ethru(err);
