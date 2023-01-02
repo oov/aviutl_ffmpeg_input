@@ -18,7 +18,7 @@ FONT 9, "Meiryo UI"
     PUSHBUTTON "キャンセル", IDCANCEL, 136, 188, 56, 12
     AUTOCHECKBOX "ファイル名が ""-ffmpeg"" で終わるファイルだけ読み込む(&F)", 1000, 8, 8, 184, 9
     LTEXT "優先するデコーダー(&D):", -1, 8, 22, 184, 9
-    EDITTEXT 1001, 8, 31, 184, 12
+    EDITTEXT 1001, 8, 31, 184, 12, ES_AUTOHSCROLL
     LTEXT "リソース管理モード(&R):", -1, 8, 48, 184, 9
     COMBOBOX 1002, 8, 57, 184, 300, CBS_HASSTRINGS | CBS_AUTOHSCROLL | CBS_DROPDOWNLIST | WS_VSCROLL | WS_TABSTOP
     GROUPBOX "映像", -1, 8, 76, 184, 40
