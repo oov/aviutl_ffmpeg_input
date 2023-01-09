@@ -177,6 +177,7 @@ static NODISCARD error stream_create(struct stream **const spp,
   err = create_video(sp, &v);
   if (efailed(err)) {
     ereport(err);
+    err = NULL;
   } else {
     video_get_info(v, &sp->vi);
     sp->video_start_time = video_get_start_time(v);
@@ -184,6 +185,7 @@ static NODISCARD error stream_create(struct stream **const spp,
   err = create_audio(sp, &a);
   if (efailed(err)) {
     ereport(err);
+    err = NULL;
   } else {
     audio_get_info(a, &sp->ai);
   }
