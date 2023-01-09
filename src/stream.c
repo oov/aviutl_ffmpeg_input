@@ -62,6 +62,7 @@ static NODISCARD error create_video(struct stream *sp, struct video **v) {
                            &(struct video_options){
                                .handle = sp->file,
                                .preferred_decoders = config_get_preferred_decoders(sp->config),
+                               .num_stream = 2,
                                .scaling = config_get_scaling(sp->config),
                            });
   if (efailed(err)) {

@@ -23,6 +23,7 @@ struct video_options {
   wchar_t const *filepath;
   void *handle;
   char const *preferred_decoders;
+  size_t num_stream;
   enum video_format_scaling_algorithm scaling;
 };
 

@@ -58,6 +58,7 @@ struct ffmpeg_open_options {
 
   // these are used in ffmpeg_open.
   enum AVMediaType media_type;
+  AVCodec const *codec;
   char const *preferred_decoders;
 };
 

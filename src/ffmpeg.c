@@ -329,11 +329,6 @@ static NODISCARD error open_preferred_codec(char const *const decoders,
     err = ethru(err);
     goto cleanup;
   }
-  // workaround for h264_qsv
-  if (strcmp(codec->name, "h264_qsv") == 0 && (*codec_context)->pix_fmt == 0) {
-    // It seems that the correct format is not set, so set it manually.
-    (*codec_context)->pix_fmt = AV_PIX_FMT_NV12;
-  }
   if (codec_selected) {
     *codec_selected = codec;
   }
@@ -447,19 +442,33 @@ NODISCARD error ffmpeg_open(struct ffmpeg_stream *const fs, struct ffmpeg_open_o
     err = emsg(err_type_generic, err_fail, &native_unmanaged_const(NSTR("stream not found")));
     goto cleanup;
   }
-  AVCodec const *const orig_codec = avcodec_find_decoder(stream->codecpar->codec_id);
-  if (!orig_codec) {
-    err = emsg(err_type_generic, err_fail, &native_unmanaged_const(NSTR("decoder not found")));
-    goto cleanup;
+  if (opt->codec != NULL) {
+    err = open_codec(opt->codec, stream->codecpar, NULL, &cctx);
+    if (efailed(err)) {
+      err = ethru(err);
+      goto cleanup;
+    }
+    fs->codec = opt->codec;
+  } else {
+    AVCodec const *const orig_codec = avcodec_find_decoder(stream->codecpar->codec_id);
+    if (!orig_codec) {
+      err = emsg(err_type_generic, err_fail, &native_unmanaged_const(NSTR("decoder not found")));
+      goto cleanup;
+    }
+    AVCodec const *codec = NULL;
+    err = open_preferred_codec(opt->preferred_decoders, orig_codec, stream->codecpar, NULL, &codec, &cctx);
+    if (efailed(err)) {
+      err = ethru(err);
+      goto cleanup;
+    }
+    fs->codec = codec;
   }
-  AVCodec const *codec = NULL;
-  err = open_preferred_codec(opt->preferred_decoders, orig_codec, stream->codecpar, NULL, &codec, &cctx);
-  if (efailed(err)) {
-    err = ethru(err);
-    goto cleanup;
+  // workaround for h264_qsv
+  if (strcmp(fs->codec->name, "h264_qsv") == 0 && fs->cctx->pix_fmt == 0) {
+    // It seems that the correct format is not set, so set it manually.
+    fs->cctx->pix_fmt = AV_PIX_FMT_NV12;
   }
   fs->stream = stream;
-  fs->codec = codec;
   fs->cctx = cctx;
 cleanup:
   if (efailed(err)) {
