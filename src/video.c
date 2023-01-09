@@ -505,34 +505,6 @@ NODISCARD error video_create(struct video **const vpp, struct video_options cons
     OutputDebugStringA(s);
   }
 #endif
-  for (size_t i = 1; i < cap; ++i) {
-#if SHOWLOG_VIDEO_INIT_BENCH
-    double const start2 = now();
-#endif
-    v->streams[i] = (struct stream){
-        .current_gop_intra_pts = AV_NOPTS_VALUE,
-    };
-    err = ffmpeg_open(&v->streams[i].ffmpeg,
-                      &(struct ffmpeg_open_options){
-                          .filepath = opt->filepath,
-                          .handle = opt->handle,
-                          .media_type = AVMEDIA_TYPE_VIDEO,
-                          .preferred_decoders = opt->preferred_decoders,
-                      });
-    if (efailed(err)) {
-      err = ethru(err);
-      goto cleanup;
-    }
-    ++v->len;
-#if SHOWLOG_VIDEO_INIT_BENCH
-    {
-      double const end2 = now();
-      char s[256];
-      ov_snprintf(s, 256, "v init%d: %0.4fs", i, end2 - start2);
-      OutputDebugStringA(s);
-    }
-#endif
-  }
 
   err = grab(v->streams);
   if (efailed(err)) {
