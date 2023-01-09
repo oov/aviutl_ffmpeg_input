@@ -54,60 +54,60 @@ void audio_get_info(struct audio const *const a, struct info_audio *const ai) {
 #endif
 }
 
-static inline void calc_current_frame(struct audio *fp) {
-  if (fp->jumped) {
-    int64_t pos = fp->idx ? audioidx_get(fp->idx, fp->ffmpeg.packet->pts, fp->wait_index) : -1;
+static inline void calc_current_frame(struct audio *a) {
+  if (a->jumped) {
+    int64_t pos = a->idx ? audioidx_get(a->idx, a->ffmpeg.packet->pts, a->wait_index) : -1;
     if (pos != -1) {
       // found corrent sample position
-      fp->current_sample_pos = pos;
+      a->current_sample_pos = pos;
     } else {
       // It seems pts value may be inaccurate.
       // There would be no way to correct the values except to recalculate from the first frame.
       // This program allows inaccurate values.
       // Instead, it avoids the accumulation of errors by not using
       // the received pts as long as it continues to read frames.
-      int64_t const video_start_time = av_rescale_q(fp->video_start_time, AV_TIME_BASE_Q, fp->ffmpeg.stream->time_base);
-      fp->current_sample_pos = av_rescale_q(fp->ffmpeg.frame->pts - video_start_time,
-                                            fp->ffmpeg.stream->time_base,
-                                            av_make_q(1, fp->ffmpeg.cctx->sample_rate));
+      int64_t const video_start_time = av_rescale_q(a->video_start_time, AV_TIME_BASE_Q, a->ffmpeg.stream->time_base);
+      a->current_sample_pos = av_rescale_q(a->ffmpeg.frame->pts - video_start_time,
+                                           a->ffmpeg.stream->time_base,
+                                           av_make_q(1, a->ffmpeg.cctx->sample_rate));
     }
-    fp->jumped = false;
+    a->jumped = false;
   } else {
-    fp->current_sample_pos += fp->ffmpeg.frame->nb_samples;
+    a->current_sample_pos += a->ffmpeg.frame->nb_samples;
   }
-  fp->current_samples = fp->ffmpeg.frame->nb_samples;
+  a->current_samples = a->ffmpeg.frame->nb_samples;
 #if SHOWLOG_AUDIO_CURRENT_FRAME
   char s[256];
   ov_snprintf(s,
               256,
               "a samplepos: %lld key_frame: %d, pts: %lld start_time: %lld time_base:%f sample_rate:%d",
-              fp->current_sample_pos,
-              fp->ffmpeg.frame->key_frame,
-              fp->ffmpeg.frame->pts,
-              fp->ffmpeg.stream->start_time,
-              av_q2d(fp->ffmpeg.stream->time_base),
-              fp->ffmpeg.cctx->sample_rate);
+              a->current_sample_pos,
+              a->ffmpeg.frame->key_frame,
+              a->ffmpeg.frame->pts,
+              a->ffmpeg.stream->start_time,
+              av_q2d(a->ffmpeg.stream->time_base),
+              a->ffmpeg.cctx->sample_rate);
   OutputDebugStringA(s);
 #endif
 }
 
-static NODISCARD error grab(struct audio *fp) {
-  error err = ffmpeg_grab(&fp->ffmpeg);
+static NODISCARD error grab(struct audio *a) {
+  error err = ffmpeg_grab(&a->ffmpeg);
   if (efailed(err)) {
     goto cleanup;
   }
-  calc_current_frame(fp);
+  calc_current_frame(a);
 cleanup:
   return err;
 }
 
-static NODISCARD error seek(struct audio *fp, int64_t sample) {
+static NODISCARD error seek(struct audio *a, int64_t sample) {
 #if SHOWLOG_AUDIO_SEEK_SPEED
   double const start = now();
 #endif
   error err = eok();
   int64_t time_stamp =
-      av_rescale_q(sample, av_inv_q(fp->ffmpeg.stream->time_base), av_make_q(fp->ffmpeg.cctx->sample_rate, 1));
+      av_rescale_q(sample, av_inv_q(a->ffmpeg.stream->time_base), av_make_q(a->ffmpeg.cctx->sample_rate, 1));
 #if SHOWLOG_AUDIO_SEEK
   {
     char s[256];
@@ -116,36 +116,36 @@ static NODISCARD error seek(struct audio *fp, int64_t sample) {
                 "req_pts:%lld sample: %lld tb: %f sr: %d",
                 time_stamp,
                 sample,
-                av_q2d(av_inv_q(fp->ffmpeg.stream->time_base)),
-                fp->ffmpeg.cctx->sample_rate);
+                av_q2d(av_inv_q(a->ffmpeg.stream->time_base)),
+                a->ffmpeg.cctx->sample_rate);
     OutputDebugStringA(s);
   }
 #endif
   for (;;) {
-    err = ffmpeg_seek(&fp->ffmpeg, time_stamp);
+    err = ffmpeg_seek(&a->ffmpeg, time_stamp);
     if (efailed(err)) {
       err = ethru(err);
       goto cleanup;
     }
-    fp->jumped = true;
-    err = grab(fp);
+    a->jumped = true;
+    err = grab(a);
     if (efailed(err)) {
       err = ethru(err);
       goto cleanup;
     }
-    if (fp->current_sample_pos > sample) {
-      time_stamp = fp->ffmpeg.frame->pts - 1;
+    if (a->current_sample_pos > sample) {
+      time_stamp = a->ffmpeg.frame->pts - 1;
       continue;
     }
     break;
   }
-  while (fp->current_sample_pos + fp->ffmpeg.frame->nb_samples < sample) {
+  while (a->current_sample_pos + a->ffmpeg.frame->nb_samples < sample) {
 #if SHOWLOG_AUDIO_SEEK
     char s[256];
-    ov_snprintf(s, 256, "csp: %lld / smp: %lld", fp->current_sample_pos + fp->ffmpeg.frame->nb_samples, sample);
+    ov_snprintf(s, 256, "csp: %lld / smp: %lld", a->current_sample_pos + a->ffmpeg.frame->nb_samples, sample);
     OutputDebugStringA(s);
 #endif
-    err = grab(fp);
+    err = grab(a);
     if (efailed(err)) {
       err = ethru(err);
       goto cleanup;
@@ -165,7 +165,7 @@ cleanup :
 
 static inline int imin(int const a, int const b) { return a > b ? b : a; }
 
-NODISCARD error audio_read(struct audio *const fp,
+NODISCARD error audio_read(struct audio *const a,
                            int64_t const offset,
                            int const length,
                            void *const buf,
@@ -182,7 +182,7 @@ NODISCARD error audio_read(struct audio *const fp,
   int r = 0;
   int64_t readpos = 0;
 
-  fp->wait_index = (fp->index_mode == aim_strict) || accurate;
+  a->wait_index = (a->index_mode == aim_strict) || accurate;
 
 start:
   if (read == length) {
@@ -191,54 +191,51 @@ start:
 
 readbuf:
   readpos = offset + read;
-  if (readpos >= fp->swr_buf_sample_pos && readpos < (fp->swr_buf_sample_pos + fp->swr_buf_written)) {
-    int const bufpos = (int)(readpos - fp->swr_buf_sample_pos);
-    int const samples = imin(fp->swr_buf_written - bufpos, (int)(length - read));
-    memcpy(dest + (read * g_sample_size), fp->swr_buf + (bufpos * g_sample_size), (size_t)(samples * g_sample_size));
+  if (readpos >= a->swr_buf_sample_pos && readpos < (a->swr_buf_sample_pos + a->swr_buf_written)) {
+    int const bufpos = (int)(readpos - a->swr_buf_sample_pos);
+    int const samples = imin(a->swr_buf_written - bufpos, (int)(length - read));
+    memcpy(dest + (read * g_sample_size), a->swr_buf + (bufpos * g_sample_size), (size_t)(samples * g_sample_size));
     read += samples;
     goto start;
   }
 
   // flushswr:
-  r = swr_convert(fp->swr_context, &fp->swr_buf, fp->swr_buf_len, NULL, 0);
+  r = swr_convert(a->swr_context, &a->swr_buf, a->swr_buf_len, NULL, 0);
   if (r < 0) {
     err = errffmpeg(r);
     goto cleanup;
   }
   if (r) {
-    fp->swr_buf_sample_pos += fp->swr_buf_written;
-    fp->swr_buf_written = r;
+    a->swr_buf_sample_pos += a->swr_buf_written;
+    a->swr_buf_written = r;
     goto readbuf;
   }
 
   // seek:
-  if (readpos < fp->current_sample_pos || readpos >= fp->current_sample_pos + fp->ffmpeg.cctx->sample_rate) {
-    err = seek(fp, readpos);
+  if (readpos < a->current_sample_pos || readpos >= a->current_sample_pos + a->ffmpeg.cctx->sample_rate) {
+    err = seek(a, readpos);
     if (efailed(err)) {
       err = ethru(err);
       goto cleanup;
     }
     goto convert;
   }
-  err = grab(fp);
+  err = grab(a);
   if (efailed(err)) {
     err = ethru(err);
     goto cleanup;
   }
 
 convert:
-  r = swr_convert(fp->swr_context,
-                  (void *)&fp->swr_buf,
-                  fp->swr_buf_len,
-                  (void *)fp->ffmpeg.frame->data,
-                  fp->ffmpeg.frame->nb_samples);
+  r = swr_convert(
+      a->swr_context, (void *)&a->swr_buf, a->swr_buf_len, (void *)a->ffmpeg.frame->data, a->ffmpeg.frame->nb_samples);
   if (r < 0) {
     err = errffmpeg(r);
     goto cleanup;
   }
   if (r) {
-    fp->swr_buf_sample_pos = fp->current_sample_pos;
-    fp->swr_buf_written = r;
+    a->swr_buf_sample_pos = a->current_sample_pos;
+    a->swr_buf_written = r;
     goto readbuf;
   }
 
@@ -276,18 +273,18 @@ NODISCARD error audio_create(struct audio **const app, struct audio_options cons
   if (!app || *app || !opt || (!opt->filepath && (opt->handle == NULL || opt->handle == INVALID_HANDLE_VALUE))) {
     return errg(err_invalid_arugment);
   }
-  struct audio *fp = NULL;
-  error err = mem(&fp, 1, sizeof(struct audio));
+  struct audio *a = NULL;
+  error err = mem(&a, 1, sizeof(struct audio));
   if (efailed(err)) {
     ereport(err);
     return NULL;
   }
-  *fp = (struct audio){
+  *a = (struct audio){
       .index_mode = opt->index_mode,
       .video_start_time = opt->video_start_time,
   };
 
-  err = ffmpeg_open(&fp->ffmpeg,
+  err = ffmpeg_open(&a->ffmpeg,
                     &(struct ffmpeg_open_options){
                         .filepath = opt->filepath,
                         .handle = opt->handle,
@@ -299,15 +296,15 @@ NODISCARD error audio_create(struct audio **const app, struct audio_options cons
     goto cleanup;
   }
 
-  fp->jumped = true;
-  err = grab(fp);
+  a->jumped = true;
+  err = grab(a);
   if (efailed(err)) {
     err = ethru(err);
     goto cleanup;
   }
 
-  if (fp->index_mode != aim_noindex) {
-    err = audioidx_create(&fp->idx,
+  if (a->index_mode != aim_noindex) {
+    err = audioidx_create(&a->idx,
                           &(struct audioidx_create_options){
                               .filepath = opt->filepath,
                               .handle = opt->handle,
@@ -319,20 +316,20 @@ NODISCARD error audio_create(struct audio **const app, struct audio_options cons
     }
   }
 
-  fp->swr_buf_len = fp->ffmpeg.cctx->sample_rate * g_channels;
-  int r = av_samples_alloc(&fp->swr_buf, NULL, 2, fp->swr_buf_len, AV_SAMPLE_FMT_S16, 0);
+  a->swr_buf_len = a->ffmpeg.cctx->sample_rate * g_channels;
+  int r = av_samples_alloc(&a->swr_buf, NULL, 2, a->swr_buf_len, AV_SAMPLE_FMT_S16, 0);
   if (r < 0) {
     err = errffmpeg(r);
     goto cleanup;
   }
 
-  r = swr_alloc_set_opts2(&fp->swr_context,
+  r = swr_alloc_set_opts2(&a->swr_context,
                           &(AVChannelLayout)AV_CHANNEL_LAYOUT_STEREO,
                           g_sample_format,
-                          fp->ffmpeg.cctx->sample_rate,
-                          &fp->ffmpeg.frame->ch_layout,
-                          fp->ffmpeg.frame->format,
-                          fp->ffmpeg.frame->sample_rate,
+                          a->ffmpeg.cctx->sample_rate,
+                          &a->ffmpeg.frame->ch_layout,
+                          a->ffmpeg.frame->format,
+                          a->ffmpeg.frame->sample_rate,
                           0,
                           NULL);
   if (r < 0) {
@@ -340,16 +337,16 @@ NODISCARD error audio_create(struct audio **const app, struct audio_options cons
     goto cleanup;
   }
   // TODO: would like to be able to use sox if it supports resampling in the future.
-  // av_opt_set_int(fp->swr_context, "engine", SWR_ENGINE_SOXR, 0);
-  r = swr_init(fp->swr_context);
+  // av_opt_set_int(a->swr_context, "engine", SWR_ENGINE_SOXR, 0);
+  r = swr_init(a->swr_context);
   if (r < 0) {
     err = errffmpeg(r);
     goto cleanup;
   }
-  *app = fp;
+  *app = a;
 cleanup:
   if (efailed(err)) {
-    audio_destroy(&fp);
+    audio_destroy(&a);
   }
   return err;
 }
