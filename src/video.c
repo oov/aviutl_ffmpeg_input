@@ -171,53 +171,53 @@ cleanup :
 }
 
 static int create_sub_stream(void *userdata) {
-  struct video *const fp = userdata;
+  struct video *const v = userdata;
   for (;;) {
-    mtx_lock(&fp->mtx);
-    size_t const cap = fp->cap;
-    size_t const len = fp->len;
-    enum status st = fp->status;
-    mtx_unlock(&fp->mtx);
+    mtx_lock(&v->mtx);
+    size_t const cap = v->cap;
+    size_t const len = v->len;
+    enum status st = v->status;
+    mtx_unlock(&v->mtx);
     if (st == status_closing || cap == len) {
       break;
     }
-    fp->streams[len] = (struct stream){
+    v->streams[len] = (struct stream){
         .current_gop_intra_pts = AV_NOPTS_VALUE,
     };
-    error err = ffmpeg_open(&fp->streams[len].ffmpeg,
+    error err = ffmpeg_open(&v->streams[len].ffmpeg,
                             &(struct ffmpeg_open_options){
-                                .filepath = fp->filepath.ptr,
-                                .handle = fp->handle,
+                                .filepath = v->filepath.ptr,
+                                .handle = v->handle,
                                 .media_type = AVMEDIA_TYPE_VIDEO,
-                                .codec = fp->streams[0].ffmpeg.codec,
+                                .codec = v->streams[0].ffmpeg.codec,
                             });
     if (efailed(err)) {
       err = ethru(err);
       ereport(err);
       break;
     }
-    mtx_lock(&fp->mtx);
-    ++fp->len;
-    mtx_unlock(&fp->mtx);
+    mtx_lock(&v->mtx);
+    ++v->len;
+    mtx_unlock(&v->mtx);
   }
   return 0;
 }
 
-static struct stream *find_stream(struct video *const fp, int64_t const frame, bool *const need_seek) {
+static struct stream *find_stream(struct video *const v, int64_t const frame, bool *const need_seek) {
   struct timespec ts;
   timespec_get(&ts, TIME_UTC);
-  mtx_lock(&fp->mtx);
-  size_t const num_stream = fp->len;
-  if (fp->status == status_nothread && fp->cap > 1) {
-    if (thrd_create(&fp->thread, create_sub_stream, fp) == thrd_success) {
-      fp->status = status_running;
+  mtx_lock(&v->mtx);
+  size_t const num_stream = v->len;
+  if (v->status == status_nothread && v->cap > 1) {
+    if (thrd_create(&v->thread, create_sub_stream, v) == thrd_success) {
+      v->status = status_running;
     }
   }
-  mtx_unlock(&fp->mtx);
+  mtx_unlock(&v->mtx);
 
   // find same or next frame
   for (size_t i = 0; i < num_stream; ++i) {
-    struct stream *const stream = fp->streams + i;
+    struct stream *const stream = v->streams + i;
     if (frame == stream->current_frame || frame == stream->current_frame + 1) {
       stream->ts = ts;
       *need_seek = false;
@@ -230,17 +230,17 @@ static struct stream *find_stream(struct video *const fp, int64_t const frame, b
     }
   }
   // find same gop
-  if (avformat_index_get_entries_count(fp->streams[0].ffmpeg.stream) > 1) {
+  if (avformat_index_get_entries_count(v->streams[0].ffmpeg.stream) > 1) {
     int64_t const time_stamp = av_rescale_q(
-        frame, av_inv_q(fp->streams[0].ffmpeg.stream->time_base), fp->streams[0].ffmpeg.stream->avg_frame_rate);
+        frame, av_inv_q(v->streams[0].ffmpeg.stream->time_base), v->streams[0].ffmpeg.stream->avg_frame_rate);
     AVIndexEntry const *const idx =
-        avformat_index_get_entry_from_timestamp(fp->streams[0].ffmpeg.stream, time_stamp, AVSEEK_FLAG_BACKWARD);
+        avformat_index_get_entry_from_timestamp(v->streams[0].ffmpeg.stream, time_stamp, AVSEEK_FLAG_BACKWARD);
     int64_t const gop_intra_pts = idx->timestamp;
     // find nearest stream
     struct stream *nearest = NULL;
     int64_t gap = INT64_MAX;
     for (size_t i = 0; i < num_stream; ++i) {
-      struct stream *const stream = fp->streams + i;
+      struct stream *const stream = v->streams + i;
       if (stream->current_gop_intra_pts != gop_intra_pts || frame < stream->current_frame) {
         continue;
       }
@@ -253,7 +253,7 @@ static struct stream *find_stream(struct video *const fp, int64_t const frame, b
       *need_seek = false;
 #if SHOWLOG_VIDEO_FIND_STREAM
       char s[256];
-      ov_snprintf(s, 256, "find stream #%d same gop(%lld)", nearest - fp->streams, frame - nearest->current_frame);
+      ov_snprintf(s, 256, "find stream #%d same gop(%lld)", nearest - v->streams, frame - nearest->current_frame);
       OutputDebugStringA(s);
 #endif
       return nearest;
@@ -264,7 +264,7 @@ static struct stream *find_stream(struct video *const fp, int64_t const frame, b
   struct stream *oldest = NULL;
   struct stream *nearest = NULL;
   for (size_t i = 0; i < num_stream; ++i) {
-    struct stream *const stream = fp->streams + i;
+    struct stream *const stream = v->streams + i;
     if (oldest == NULL || oldest->ts.tv_sec > stream->ts.tv_sec ||
         (oldest->ts.tv_sec == stream->ts.tv_sec && oldest->ts.tv_nsec > stream->ts.tv_nsec)) {
       oldest = stream;
@@ -283,7 +283,7 @@ static struct stream *find_stream(struct video *const fp, int64_t const frame, b
       *need_seek = false;
 #if SHOWLOG_VIDEO_FIND_STREAM
       char s[256];
-      ov_snprintf(s, 256, "find stream #%d near(%lld)", nearest - fp->streams, frame - nearest->current_frame);
+      ov_snprintf(s, 256, "find stream #%d near(%lld)", nearest - v->streams, frame - nearest->current_frame);
       OutputDebugStringA(s);
 #endif
     }
@@ -292,19 +292,19 @@ static struct stream *find_stream(struct video *const fp, int64_t const frame, b
   *need_seek = true;
 #if SHOWLOG_VIDEO_FIND_STREAM
   char s[256];
-  ov_snprintf(s, 256, "find stream #%d oldest(%lld)", oldest - fp->streams, frame - oldest->current_frame);
+  ov_snprintf(s, 256, "find stream #%d oldest(%lld)", oldest - v->streams, frame - oldest->current_frame);
   OutputDebugStringA(s);
 #endif
   return oldest;
 }
 
-NODISCARD error video_read(struct video *const fp, int64_t frame, void *buf, size_t *written) {
-  if (!fp || !fp->streams[0].ffmpeg.stream || !buf || !written) {
+NODISCARD error video_read(struct video *const v, int64_t frame, void *buf, size_t *written) {
+  if (!v || !v->streams[0].ffmpeg.stream || !buf || !written) {
     return errg(err_invalid_arugment);
   }
 
   bool need_seek = false;
-  struct stream *stream = find_stream(fp, frame, &need_seek);
+  struct stream *stream = find_stream(v, frame, &need_seek);
 
   error err = eok();
 #if SHOWLOG_VIDEO_READ
@@ -341,8 +341,8 @@ NODISCARD error video_read(struct video *const fp, int64_t frame, void *buf, siz
   int const width = stream->ffmpeg.frame->width;
   int const height = stream->ffmpeg.frame->height;
   int const output_linesize = width * 3;
-  if (fp->yuy2) {
-    sws_scale(fp->sws_context,
+  if (v->yuy2) {
+    sws_scale(v->sws_context,
               (const uint8_t *const *)stream->ffmpeg.frame->data,
               stream->ffmpeg.frame->linesize,
               0,
@@ -351,7 +351,7 @@ NODISCARD error video_read(struct video *const fp, int64_t frame, void *buf, siz
               (int[4]){width * 2, 0, 0, 0});
     *written = (size_t)(width * height * 2);
   } else {
-    sws_scale(fp->sws_context,
+    sws_scale(v->sws_context,
               (const uint8_t *const *)stream->ffmpeg.frame->data,
               stream->ffmpeg.frame->linesize,
               0,
@@ -364,14 +364,14 @@ cleanup:
   return err;
 }
 
-static inline struct SwsContext *create_sws_context(struct video *fp, enum video_format_scaling_algorithm scaling) {
+static inline struct SwsContext *create_sws_context(struct video *v, enum video_format_scaling_algorithm scaling) {
   int pix_format = AV_PIX_FMT_BGR24;
   if (is_output_yuy2) {
-    int const f = fp->streams[0].ffmpeg.cctx->pix_fmt;
+    int const f = v->streams[0].ffmpeg.cctx->pix_fmt;
     if (f != AV_PIX_FMT_RGB24 && f != AV_PIX_FMT_RGB32 && f != AV_PIX_FMT_RGBA && f != AV_PIX_FMT_BGR0 &&
         f != AV_PIX_FMT_BGR24 && f != AV_PIX_FMT_ARGB && f != AV_PIX_FMT_ABGR && f != AV_PIX_FMT_GBRP) {
       pix_format = AV_PIX_FMT_YUYV422;
-      fp->yuy2 = true;
+      v->yuy2 = true;
     }
   }
   int sws_flags = 0;
@@ -410,11 +410,11 @@ static inline struct SwsContext *create_sws_context(struct video *fp, enum video
     sws_flags |= SWS_SPLINE;
     break;
   }
-  return sws_getContext(fp->streams[0].ffmpeg.cctx->width,
-                        fp->streams[0].ffmpeg.cctx->height,
-                        fp->streams[0].ffmpeg.cctx->pix_fmt,
-                        fp->streams[0].ffmpeg.cctx->width,
-                        fp->streams[0].ffmpeg.cctx->height,
+  return sws_getContext(v->streams[0].ffmpeg.cctx->width,
+                        v->streams[0].ffmpeg.cctx->height,
+                        v->streams[0].ffmpeg.cctx->pix_fmt,
+                        v->streams[0].ffmpeg.cctx->width,
+                        v->streams[0].ffmpeg.cctx->height,
                         pix_format,
                         sws_flags,
                         NULL,
@@ -452,40 +452,40 @@ NODISCARD error video_create(struct video **const vpp, struct video_options cons
       !opt->num_stream) {
     return errg(err_invalid_arugment);
   }
-  struct video *fp = NULL;
-  error err = mem(&fp, 1, sizeof(struct video));
+  struct video *v = NULL;
+  error err = mem(&v, 1, sizeof(struct video));
   if (efailed(err)) {
     ereport(err);
     return NULL;
   }
   size_t const cap = opt->num_stream;
-  *fp = (struct video){
+  *v = (struct video){
       .handle = opt->handle,
   };
-  mtx_init(&fp->mtx, mtx_plain | mtx_recursive);
+  mtx_init(&v->mtx, mtx_plain | mtx_recursive);
 
   if (opt->filepath) {
-    err = scpy(&fp->filepath, opt->filepath);
+    err = scpy(&v->filepath, opt->filepath);
     if (efailed(err)) {
       err = ethru(err);
       goto cleanup;
     }
   }
 
-  err = mem(&fp->streams, cap, sizeof(struct stream));
+  err = mem(&v->streams, cap, sizeof(struct stream));
   if (efailed(err)) {
     err = ethru(err);
     goto cleanup;
   }
-  fp->cap = cap;
+  v->cap = cap;
 
 #if SHOWLOG_VIDEO_INIT_BENCH
   double const start = now();
 #endif
-  fp->streams[0] = (struct stream){
+  v->streams[0] = (struct stream){
       .current_gop_intra_pts = AV_NOPTS_VALUE,
   };
-  err = ffmpeg_open(&fp->streams[0].ffmpeg,
+  err = ffmpeg_open(&v->streams[0].ffmpeg,
                     &(struct ffmpeg_open_options){
                         .filepath = opt->filepath,
                         .handle = opt->handle,
@@ -496,7 +496,7 @@ NODISCARD error video_create(struct video **const vpp, struct video_options cons
     err = ethru(err);
     goto cleanup;
   }
-  fp->len = 1;
+  v->len = 1;
 #if SHOWLOG_VIDEO_INIT_BENCH
   {
     double const end = now();
@@ -509,10 +509,10 @@ NODISCARD error video_create(struct video **const vpp, struct video_options cons
 #if SHOWLOG_VIDEO_INIT_BENCH
     double const start2 = now();
 #endif
-    fp->streams[i] = (struct stream){
+    v->streams[i] = (struct stream){
         .current_gop_intra_pts = AV_NOPTS_VALUE,
     };
-    err = ffmpeg_open(&fp->streams[i].ffmpeg,
+    err = ffmpeg_open(&v->streams[i].ffmpeg,
                       &(struct ffmpeg_open_options){
                           .filepath = opt->filepath,
                           .handle = opt->handle,
@@ -523,7 +523,7 @@ NODISCARD error video_create(struct video **const vpp, struct video_options cons
       err = ethru(err);
       goto cleanup;
     }
-    ++fp->len;
+    ++v->len;
 #if SHOWLOG_VIDEO_INIT_BENCH
     {
       double const end2 = now();
@@ -534,20 +534,20 @@ NODISCARD error video_create(struct video **const vpp, struct video_options cons
 #endif
   }
 
-  err = grab(fp->streams);
+  err = grab(v->streams);
   if (efailed(err)) {
     err = ethru(err);
     goto cleanup;
   }
-  fp->sws_context = create_sws_context(fp, opt->scaling);
-  if (!fp->sws_context) {
+  v->sws_context = create_sws_context(v, opt->scaling);
+  if (!v->sws_context) {
     err = emsg(err_type_generic, err_fail, &native_unmanaged_const(NSTR("sws_getContext failed")));
     goto cleanup;
   }
-  *vpp = fp;
+  *vpp = v;
 cleanup:
   if (efailed(err)) {
-    video_destroy(&fp);
+    video_destroy(&v);
   }
   return err;
 }
