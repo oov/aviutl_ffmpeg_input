@@ -131,6 +131,14 @@ static NODISCARD error create_format_context(AVFormatContext **const format_cont
       err = errhr(HRESULT_FROM_WIN32(GetLastError()));
       goto cleanup;
     }
+  } else {
+    wchar_t fn[4096];
+    GetFinalPathNameByHandleW(opt->handle, fn, 4095, 0);
+    h = CreateFileW(fn, GENERIC_READ, FILE_SHARE_READ, NULL, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL);
+    if (h == INVALID_HANDLE_VALUE) {
+      err = errhr(HRESULT_FROM_WIN32(GetLastError()));
+      goto cleanup;
+    }
   }
 #endif
 
@@ -174,12 +182,12 @@ static NODISCARD error create_format_context(AVFormatContext **const format_cont
     file->h = opt->handle;
   }
 
-  buffer = av_malloc(buffer_size);
+  buffer = av_malloc(opt->buffer_size);
   if (!buffer) {
     err = emsg(err_type_generic, err_fail, &native_unmanaged_const(NSTR("av_malloc failed")));
     goto cleanup;
   }
-  ctx->pb = avio_alloc_context(buffer, (int)buffer_size, 0, file, w32read, NULL, w32seek);
+  ctx->pb = avio_alloc_context(buffer, (int)opt->buffer_size, 0, file, w32read, NULL, w32seek);
   if (!ctx->pb) {
     err = emsg(err_type_generic, err_fail, &native_unmanaged_const(NSTR("avio_alloc_context failed")));
     goto cleanup;
