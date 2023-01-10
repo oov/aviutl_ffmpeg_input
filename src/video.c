@@ -215,20 +215,45 @@ static struct stream *find_stream(struct video *const v, int64_t const frame, bo
   }
   mtx_unlock(&v->mtx);
 
-  // find same or next frame
-  for (size_t i = 0; i < num_stream; ++i) {
-    struct stream *const stream = v->streams + i;
-    if (frame == stream->current_frame || frame == stream->current_frame + 1) {
-      stream->ts = ts;
-      *need_seek = false;
+  // find same frame or near
+  {
+    struct stream *nearest = NULL;
+    int64_t dist = INT64_MAX;
+    for (size_t i = 0; i < num_stream; ++i) {
+      struct stream *const stream = v->streams + i;
+      if (frame == stream->current_frame) {
+        stream->ts = ts;
+        *need_seek = false;
 #if SHOWLOG_VIDEO_FIND_STREAM
-      char s[256];
-      ov_snprintf(s, 256, "find stream #%d same or next(%lld)", i, frame - nearest->current_frame);
-      OutputDebugStringA(s);
+        char s[256];
+        ov_snprintf(s, 256, "find stream #%zu same or next(%lld)", i, frame - stream->current_frame);
+        OutputDebugStringA(s);
 #endif
-      return stream;
+        return stream;
+      }
+      if (stream->current_gop_intra_pts == AV_NOPTS_VALUE) {
+        continue;
+      }
+      int64_t const d = frame - stream->current_frame;
+      if (d > 0 && dist > d) {
+        nearest = stream;
+        dist = d;
+      }
+    }
+    if (nearest) {
+      if (frame - nearest->current_frame < 15) {
+        nearest->ts = ts;
+        *need_seek = false;
+#if SHOWLOG_VIDEO_FIND_STREAM
+        char s[256];
+        ov_snprintf(s, 256, "find stream #%zu near(%lld)", nearest - v->streams, frame - nearest->current_frame);
+        OutputDebugStringA(s);
+#endif
+        return nearest;
+      }
     }
   }
+
   // find same gop
   if (avformat_index_get_entries_count(v->streams[0].ffmpeg.stream) > 1) {
     int64_t const time_stamp = av_rescale_q(
@@ -253,7 +278,7 @@ static struct stream *find_stream(struct video *const v, int64_t const frame, bo
       *need_seek = false;
 #if SHOWLOG_VIDEO_FIND_STREAM
       char s[256];
-      ov_snprintf(s, 256, "find stream #%d same gop(%lld)", nearest - v->streams, frame - nearest->current_frame);
+      ov_snprintf(s, 256, "find stream #%zu same gop(%lld)", nearest - v->streams, frame - nearest->current_frame);
       OutputDebugStringA(s);
 #endif
       return nearest;
@@ -262,37 +287,18 @@ static struct stream *find_stream(struct video *const v, int64_t const frame, bo
   // it seems should seek, so we choose stream to use by LRU.
   // but if the frame numbers are very close, avoid seeking.
   struct stream *oldest = NULL;
-  struct stream *nearest = NULL;
   for (size_t i = 0; i < num_stream; ++i) {
     struct stream *const stream = v->streams + i;
     if (oldest == NULL || oldest->ts.tv_sec > stream->ts.tv_sec ||
         (oldest->ts.tv_sec == stream->ts.tv_sec && oldest->ts.tv_nsec > stream->ts.tv_nsec)) {
       oldest = stream;
     }
-    if (stream->current_gop_intra_pts == AV_NOPTS_VALUE) {
-      continue;
-    }
-    int64_t const dist = frame - stream->current_frame;
-    if (nearest == NULL || (dist > 0 && nearest->current_frame > stream->current_frame)) {
-      nearest = stream;
-    }
-  }
-  if (nearest) {
-    if (frame - nearest->current_frame < 15) {
-      nearest->ts = ts;
-      *need_seek = false;
-#if SHOWLOG_VIDEO_FIND_STREAM
-      char s[256];
-      ov_snprintf(s, 256, "find stream #%d near(%lld)", nearest - v->streams, frame - nearest->current_frame);
-      OutputDebugStringA(s);
-#endif
-    }
   }
   oldest->ts = ts;
   *need_seek = true;
 #if SHOWLOG_VIDEO_FIND_STREAM
   char s[256];
-  ov_snprintf(s, 256, "find stream #%d oldest(%lld)", oldest - v->streams, frame - oldest->current_frame);
+  ov_snprintf(s, 256, "find stream #%zu oldest(%lld)", oldest - v->streams, frame - oldest->current_frame);
   OutputDebugStringA(s);
 #endif
   return oldest;
