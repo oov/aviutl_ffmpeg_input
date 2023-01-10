@@ -15,6 +15,7 @@ struct audio_options {
   wchar_t const *filepath;
   void *handle;
   char const *preferred_decoders;
+  size_t num_stream;
   int64_t video_start_time;
   enum audio_index_mode index_mode;
 };

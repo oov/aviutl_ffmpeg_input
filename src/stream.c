@@ -78,6 +78,7 @@ static NODISCARD error create_audio(struct stream *sp, struct audio **a) {
                            &(struct audio_options){
                                .handle = sp->file,
                                .preferred_decoders = config_get_preferred_decoders(sp->config),
+                               .num_stream = 2,
                                .video_start_time = sp->video_start_time,
                                .index_mode = config_get_audio_index_mode(sp->config),
                            });
