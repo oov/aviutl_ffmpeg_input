@@ -8,8 +8,9 @@ struct config {
   struct str preferred_decoders;
   enum video_format_scaling_algorithm scaling;
   enum config_handle_manage_mode handle_manage_mode;
-  bool need_postfix;
   enum audio_index_mode audio_index_mode;
+  int number_of_stream;
+  bool need_postfix;
   bool invert_phase;
   bool modified;
 };
@@ -33,6 +34,8 @@ cleanup:
 enum config_handle_manage_mode config_get_handle_manage_mode(struct config const *const c) {
   return c->handle_manage_mode;
 }
+
+int config_get_number_of_stream(struct config const *const c) { return c->number_of_stream; }
 
 char const *config_get_preferred_decoders(struct config const *const c) {
   return c->preferred_decoders.ptr ? c->preferred_decoders.ptr : "";
@@ -64,6 +67,23 @@ NODISCARD error config_set_handle_manage_mode(struct config *const c,
     break;
   }
   c->handle_manage_mode = handle_manage_mode;
+  c->modified = true;
+  return eok();
+}
+
+NODISCARD error config_set_number_of_stream(struct config *const c, int number_of_stream) {
+  if (!c) {
+    return errg(err_invalid_arugment);
+  }
+  if (number_of_stream < 1) {
+    number_of_stream = 1;
+  } else if (number_of_stream > 16) {
+    number_of_stream = 16;
+  }
+  if (c->number_of_stream == number_of_stream) {
+    return eok();
+  }
+  c->number_of_stream = number_of_stream;
   c->modified = true;
   return eok();
 }
@@ -211,6 +231,11 @@ static NODISCARD error load(struct config *c) {
     err = ethru(err);
     goto cleanup;
   }
+  err = config_set_number_of_stream(c, (int)(GetPrivateProfileIntA("global", "number_of_stream", 2, filepath.ptr)));
+  if (efailed(err)) {
+    err = ethru(err);
+    goto cleanup;
+  }
   len = GetPrivateProfileStringA("global", "preferred_decoders", "", buf, buffer_size, filepath.ptr);
   buf[len] = '\0';
   err = config_set_preferred_decoders(c, buf);
@@ -263,6 +288,7 @@ NODISCARD error config_load(struct config *c) {
   }
   ereport(sfree(&c->preferred_decoders));
   c->handle_manage_mode = tmp->handle_manage_mode;
+  c->number_of_stream = tmp->number_of_stream;
   c->preferred_decoders = tmp->preferred_decoders;
   tmp->preferred_decoders = (struct str){0};
   c->need_postfix = tmp->need_postfix;
@@ -291,6 +317,11 @@ NODISCARD error config_save(struct config *c) {
   }
   if (!WritePrivateProfileStringA(
           "global", "handle_manage_mode", ov_itoa((int64_t)(config_get_handle_manage_mode(c)), buf), filepath.ptr)) {
+    err = errhr(HRESULT_FROM_WIN32(GetLastError()));
+    goto cleanup;
+  }
+  if (!WritePrivateProfileStringA(
+          "global", "number_of_stream", ov_itoa((int64_t)(config_get_number_of_stream(c)), buf), filepath.ptr)) {
     err = errhr(HRESULT_FROM_WIN32(GetLastError()));
     goto cleanup;
   }

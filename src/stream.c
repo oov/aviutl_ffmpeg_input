@@ -62,7 +62,7 @@ static NODISCARD error create_video(struct stream *sp, struct video **v) {
                            &(struct video_options){
                                .handle = sp->file,
                                .preferred_decoders = config_get_preferred_decoders(sp->config),
-                               .num_stream = 2,
+                               .num_stream = (size_t)(config_get_number_of_stream(sp->config)),
                                .scaling = config_get_scaling(sp->config),
                            });
   if (efailed(err)) {
@@ -78,7 +78,7 @@ static NODISCARD error create_audio(struct stream *sp, struct audio **a) {
                            &(struct audio_options){
                                .handle = sp->file,
                                .preferred_decoders = config_get_preferred_decoders(sp->config),
-                               .num_stream = 2,
+                               .num_stream = (size_t)(config_get_number_of_stream(sp->config)),
                                .video_start_time = sp->video_start_time,
                                .index_mode = config_get_audio_index_mode(sp->config),
                            });

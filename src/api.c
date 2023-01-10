@@ -317,6 +317,15 @@ static struct combo_items const handle_manage_modes[] = {
     {0},
 };
 
+static struct combo_items const number_of_streams[] = {
+    {1, L"1"},
+    {2, L"2"},
+    {4, L"4"},
+    {8, L"8"},
+    {16, L"16"},
+    {0},
+};
+
 static struct combo_items const audio_index_modes[] = {
     {aim_noindex, L"なし"},
     {aim_relax, L"リラックス"},
@@ -329,6 +338,7 @@ enum config_control {
   ID_CHK_NEED_POSTFIX = 1000,
   ID_EDT_DECODERS = 1001,
   ID_CMB_HANDLE_MANAGE_MODE = 1002,
+  ID_CMB_NUMBER_OF_STREAMS = 1003,
   ID_CMB_SCALING = 2000,
   ID_CMB_AUDIO_INDEX_MODE = 3000,
   ID_CHK_INVERT_PHASE = 3001,
@@ -379,6 +389,7 @@ static INT_PTR CALLBACK config_wndproc(HWND const dlg, UINT const message, WPARA
     set_check(dlg, ID_CHK_NEED_POSTFIX, config_get_need_postfix(pr->config));
     SetWindowTextA(GetDlgItem(dlg, ID_EDT_DECODERS), config_get_preferred_decoders(pr->config));
     set_combo(dlg, ID_CMB_HANDLE_MANAGE_MODE, handle_manage_modes, (int)(config_get_handle_manage_mode(pr->config)));
+    set_combo(dlg, ID_CMB_NUMBER_OF_STREAMS, number_of_streams, (int)(config_get_number_of_stream(pr->config)));
     set_combo(dlg, ID_CMB_SCALING, scaling_algorithms, (int)(config_get_scaling(pr->config)));
     set_combo(dlg, ID_CMB_AUDIO_INDEX_MODE, audio_index_modes, (int)(config_get_audio_index_mode(pr->config)));
     set_check(dlg, ID_CHK_INVERT_PHASE, config_get_invert_phase(pr->config));
@@ -399,6 +410,11 @@ static INT_PTR CALLBACK config_wndproc(HWND const dlg, UINT const message, WPARA
       }
       err = config_set_handle_manage_mode(
           pr->config, (enum config_handle_manage_mode)(get_combo(dlg, ID_CMB_HANDLE_MANAGE_MODE, handle_manage_modes)));
+      if (efailed(err)) {
+        err = ethru(err);
+        goto cleanup;
+      }
+      err = config_set_number_of_stream(pr->config, get_combo(dlg, ID_CMB_NUMBER_OF_STREAMS, number_of_streams));
       if (efailed(err)) {
         err = ethru(err);
         goto cleanup;
