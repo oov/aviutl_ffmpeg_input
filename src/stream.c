@@ -498,25 +498,19 @@ NODISCARD error streammap_create_stream(struct streammap *const smp,
   }
   struct stream *sp = NULL;
   error err = eok();
-  switch (config_get_handle_manage_mode(smp->config)) {
-  case chmm_normal:
-    break;
-
-  case chmm_cache:
-    err = find_from_map(smp, filepath, &sp);
-    if (efailed(err)) {
-      err = ethru(err);
-      goto cleanup;
-    }
-    break;
-
-  case chmm_pool:
+  if (!sp && smp->pool_length) {
     err = find_from_pool(smp, filepath, &sp);
     if (efailed(err)) {
       err = ethru(err);
       goto cleanup;
     }
-    break;
+  }
+  if (!sp && config_get_handle_manage_mode(smp->config) == chmm_cache) {
+    err = find_from_map(smp, filepath, &sp);
+    if (efailed(err)) {
+      err = ethru(err);
+      goto cleanup;
+    }
   }
   if (!sp) {
     err = stream_create(&sp, smp->config, filepath);
