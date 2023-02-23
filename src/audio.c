@@ -54,6 +54,7 @@ struct audio {
   bool wait_index;
 
   int64_t video_start_time;
+  int64_t first_sample_pos;
 };
 
 static void stream_destroy(struct stream *const stream) {
@@ -288,6 +289,9 @@ readbuf:
   // seek:
   if (readpos < stream->current_sample_pos ||
       readpos >= stream->current_sample_pos + stream->ffmpeg.stream->codecpar->sample_rate) {
+    if (readpos < a->first_sample_pos) {
+      goto inject_silence;
+    }
     err = seek(a, stream, readpos);
     if (efailed(err)) {
       err = ethru(err);
@@ -311,11 +315,24 @@ convert:
     err = errffmpeg(r);
     goto cleanup;
   }
-  if (r) {
-    stream->swr_buf_sample_pos = stream->current_sample_pos;
-    stream->swr_buf_written = r;
-    goto readbuf;
+  stream->swr_buf_sample_pos = stream->current_sample_pos;
+  stream->swr_buf_written = r;
+  goto readbuf;
+
+inject_silence:
+  r = swr_inject_silence(stream->swr_context, imin(stream->swr_buf_len, (int)(a->first_sample_pos - readpos)));
+  if (r < 0) {
+    err = errffmpeg(r);
+    goto cleanup;
   }
+  r = swr_convert(stream->swr_context, (void *)&stream->swr_buf, stream->swr_buf_len, NULL, 0);
+  if (r < 0) {
+    err = errffmpeg(r);
+    goto cleanup;
+  }
+  stream->swr_buf_sample_pos = readpos;
+  stream->swr_buf_written = r;
+  goto readbuf;
 
 cleanup:
   if (efailed(err)) {
@@ -487,6 +504,7 @@ NODISCARD error audio_create(struct audio **const app, struct audio_options cons
     err = ethru(err);
     goto cleanup;
   }
+  a->first_sample_pos = a->streams[0].current_sample_pos;
 
   if (a->index_mode != aim_noindex) {
     err = audioidx_create(&a->idx,
