@@ -63,6 +63,8 @@ set(AVFORMAT_NAME avformat-${AVFORMAT_VERSION})
 set(AVUTIL_NAME avutil-${AVUTIL_VERSION})
 set(SWSCALE_NAME swscale-${SWSCALE_VERSION})
 set(SWRESAMPLE_NAME swresample-${SWRESAMPLE_VERSION})
+set(is_clang "$<C_COMPILER_ID:Clang>")
+set(v16_or_later "$<VERSION_GREATER_EQUAL:$<C_COMPILER_VERSION>,16>")
 foreach(target ${targets})
   if(target MATCHES "_test$")
     add_test(NAME ${target} COMMAND ${target})
@@ -94,6 +96,7 @@ foreach(target ${targets})
     -pedantic-errors
     -Wno-declaration-after-statement
     -Wno-padded
+    $<$<AND:${is_clang},${v16_or_later}>:-Wno-unsafe-buffer-usage>
     -ffunction-sections
     -fdata-sections
     $<$<CONFIG:Debug>:-O0>

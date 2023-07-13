@@ -92,10 +92,8 @@ cleanup:
 }
 
 static BOOL main_init(HINSTANCE const inst) {
-  if (!ov_init(generic_error_message_mapper_jp)) {
-    return FALSE;
-  }
-  error_register_reporter(error_reporter);
+  ov_init();
+  error_set_reporter(error_reporter);
   // TODO: ereportmsg(error_ptk_init(), &native_unmanaged(NSTR("エラーメッセージマッパーの登録に失敗しました。")));
   set_hinstance(inst);
 
