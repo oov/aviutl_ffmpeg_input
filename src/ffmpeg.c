@@ -277,7 +277,7 @@ static AVCodec const *find_preferred(AVCodec const *(*finder)(char const *name),
 static NODISCARD error open_codec(AVCodec const *const codec,
                                   AVCodecParameters const *const codec_params,
                                   AVDictionary **const options,
-                                  AVCodecContext **const codec_context) {
+                                  struct ffmpeg_stream *const fs) {
   error err = eok();
   AVCodecContext *ctx = avcodec_alloc_context3(codec);
   if (!ctx) {
@@ -294,12 +294,20 @@ static NODISCARD error open_codec(AVCodec const *const codec,
     err = errffmpeg(r);
     goto cleanup;
   }
-  *codec_context = ctx;
+  fs->codec = codec;
+  fs->cctx = ctx;
+  err = ffmpeg_grab(fs);
+  if (efailed(err)) {
+    err = ethru(err);
+    goto cleanup;
+  }
 cleanup:
   if (efailed(err)) {
     if (ctx) {
       avcodec_free_context(&ctx);
     }
+    fs->cctx = NULL;
+    fs->codec = NULL;
   }
   return err;
 }
@@ -308,9 +316,8 @@ static NODISCARD error open_preferred_codec(char const *const decoders,
                                             AVCodec const *const codec,
                                             AVCodecParameters const *const codec_params,
                                             AVDictionary **const options,
-                                            AVCodec const **codec_selected,
-                                            AVCodecContext **const codec_context) {
-  if (!codec || !codec_params || !codec_context || *codec_context) {
+                                            struct ffmpeg_stream *const fs) {
+  if (!codec || !codec_params || !fs) {
     return errg(err_invalid_arugment);
   }
   error err = eok();
@@ -318,7 +325,7 @@ static NODISCARD error open_preferred_codec(char const *const decoders,
     size_t pos = 0;
     AVCodec const *preferred = NULL;
     while ((preferred = find_preferred(avcodec_find_decoder_by_name, decoders, codec, &pos)) != NULL) {
-      err = open_codec(preferred, codec_params, options, codec_context);
+      err = open_codec(preferred, codec_params, options, fs);
       if (efailed(err)) {
         err = ethru(err);
         wchar_t buf[1024];
@@ -326,19 +333,13 @@ static NODISCARD error open_preferred_codec(char const *const decoders,
         ereportmsg(err, &native_unmanaged_const(buf));
         continue;
       }
-      if (codec_selected) {
-        *codec_selected = preferred;
-      }
       goto cleanup;
     }
   }
-  err = open_codec(codec, codec_params, options, codec_context);
+  err = open_codec(codec, codec_params, options, fs);
   if (efailed(err)) {
     err = ethru(err);
     goto cleanup;
-  }
-  if (codec_selected) {
-    *codec_selected = codec;
   }
 cleanup:
   return err;
@@ -439,7 +440,6 @@ NODISCARD error ffmpeg_open(struct ffmpeg_stream *const fs, struct ffmpeg_open_o
   if (!opt || (!opt->filepath && (opt->handle == NULL || opt->handle == INVALID_HANDLE_VALUE))) {
     return errg(err_invalid_arugment);
   }
-  AVCodecContext *cctx = NULL;
   error err = ffmpeg_open_without_codec(fs, opt);
   if (efailed(err)) {
     err = ethru(err);
@@ -450,39 +450,32 @@ NODISCARD error ffmpeg_open(struct ffmpeg_stream *const fs, struct ffmpeg_open_o
     err = emsg(err_type_generic, err_fail, &native_unmanaged_const(NSTR("stream not found")));
     goto cleanup;
   }
+  fs->stream = stream;
   if (opt->codec != NULL) {
-    err = open_codec(opt->codec, stream->codecpar, NULL, &cctx);
+    err = open_codec(opt->codec, stream->codecpar, NULL, fs);
     if (efailed(err)) {
       err = ethru(err);
       goto cleanup;
     }
-    fs->codec = opt->codec;
   } else {
     AVCodec const *const orig_codec = avcodec_find_decoder(stream->codecpar->codec_id);
     if (!orig_codec) {
       err = emsg(err_type_generic, err_fail, &native_unmanaged_const(NSTR("decoder not found")));
       goto cleanup;
     }
-    AVCodec const *codec = NULL;
-    err = open_preferred_codec(opt->preferred_decoders, orig_codec, stream->codecpar, NULL, &codec, &cctx);
+    err = open_preferred_codec(opt->preferred_decoders, orig_codec, stream->codecpar, NULL, fs);
     if (efailed(err)) {
       err = ethru(err);
       goto cleanup;
     }
-    fs->codec = codec;
   }
   // workaround for h264_qsv
   if (strcmp(fs->codec->name, "h264_qsv") == 0 && fs->cctx->pix_fmt == 0) {
     // It seems that the correct format is not set, so set it manually.
     fs->cctx->pix_fmt = AV_PIX_FMT_NV12;
   }
-  fs->stream = stream;
-  fs->cctx = cctx;
 cleanup:
   if (efailed(err)) {
-    if (cctx) {
-      avcodec_free_context(&cctx);
-    }
     ffmpeg_close(fs);
   }
   return err;

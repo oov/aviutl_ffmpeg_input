@@ -82,6 +82,7 @@ static int indexer(void *userdata) {
       int64_t fstart_time = av_rescale_q(fs.fctx->start_time, AV_TIME_BASE_Q, fs.stream->time_base);
       ov_snprintf(s,
                   256,
+                  NULL,
                   "aidx start_time: pts: %lld / global: %lld / a: %lld / v: %lld",
                   fs.packet->pts,
                   fstart_time,
@@ -101,7 +102,7 @@ static int indexer(void *userdata) {
 #ifndef NDEBUG
     if (fs.packet->pts < 1000) {
       char s[256];
-      ov_snprintf(s, 256, "aidx: pts: %lld / samplepos: %lld", fs.packet->pts, packet_samples);
+      ov_snprintf(s, 256, NULL, "aidx: pts: %lld / samplepos: %lld", fs.packet->pts, packet_samples);
       OutputDebugStringA(s);
     }
 #endif

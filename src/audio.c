@@ -128,11 +128,7 @@ void audio_get_info(struct audio const *const a, struct info_audio *const ai) {
 #endif
 }
 
-static NODISCARD error jumpgrab(struct audio *const a, struct stream *const stream) {
-  error err = ffmpeg_grab(&stream->ffmpeg);
-  if (efailed(err)) {
-    goto cleanup;
-  }
+static void calc_current_position(struct audio *const a, struct stream *const stream) {
   int64_t pos = a->idx ? audioidx_get(a->idx, stream->ffmpeg.packet->pts, a->wait_index) : -1;
   if (pos != -1) {
     // found corrent sample position
@@ -163,8 +159,6 @@ static NODISCARD error jumpgrab(struct audio *const a, struct stream *const stre
               stream->ffmpeg.stream->codecpar->sample_rate);
   OutputDebugStringA(s);
 #endif
-cleanup:
-  return err;
 }
 
 static NODISCARD error grab(struct stream *const stream) {
@@ -204,11 +198,12 @@ static NODISCARD error seek(struct audio *const a, struct stream *stream, int64_
       err = ethru(err);
       goto cleanup;
     }
-    err = jumpgrab(a, stream);
+    err = ffmpeg_grab(&stream->ffmpeg);
     if (efailed(err)) {
       err = ethru(err);
       goto cleanup;
     }
+    calc_current_position(a, stream);
     if (stream->current_sample_pos > sample) {
       time_stamp = stream->ffmpeg.frame->pts - 1;
       continue;
@@ -498,12 +493,7 @@ NODISCARD error audio_create(struct audio **const app, struct audio_options cons
     goto cleanup;
   }
   a->len = 1;
-
-  err = jumpgrab(a, a->streams);
-  if (efailed(err)) {
-    err = ethru(err);
-    goto cleanup;
-  }
+  calc_current_position(a, a->streams);
   a->first_sample_pos = a->streams[0].current_sample_pos;
 
   if (a->index_mode != aim_noindex) {

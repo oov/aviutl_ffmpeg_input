@@ -512,11 +512,7 @@ NODISCARD error video_create(struct video **const vpp, struct video_options cons
   }
 #endif
 
-  err = grab(v->streams);
-  if (efailed(err)) {
-    err = ethru(err);
-    goto cleanup;
-  }
+  calc_current_frame(v->streams);
   v->sws_context = create_sws_context(v, opt->scaling);
   if (!v->sws_context) {
     err = emsg(err_type_generic, err_fail, &native_unmanaged_const(NSTR("sws_getContext failed")));
