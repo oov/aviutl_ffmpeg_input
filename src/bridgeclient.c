@@ -681,7 +681,7 @@ cleanup:
 static BOOL ffmpeg_input_init(void) {
   error err = eok();
   bool mtx_initialized = false;
-  if (mtx_init(&g_handles_mtx, mtx_plain | mtx_recursive) != thrd_success) {
+  if (mtx_init(&g_handles_mtx, mtx_plain) != thrd_success) {
     err = errg(err_unexpected);
     goto cleanup;
   }

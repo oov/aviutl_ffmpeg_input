@@ -165,7 +165,7 @@ NODISCARD error audioidx_create(struct audioidx **const ipp, struct audioidx_cre
       .video_start_time = opt->video_start_time,
       .indexer_running = false,
   };
-  mtx_init(&ip->mtx, mtx_plain | mtx_recursive);
+  mtx_init(&ip->mtx, mtx_plain);
   cnd_init(&ip->cnd);
   ip->created_pts = AV_NOPTS_VALUE;
   err = hmnews(&ip->ptsmap, sizeof(struct item), 128, sizeof(int64_t));

@@ -388,7 +388,7 @@ NODISCARD error ipcserver_create(struct ipcserver **const s, struct ipcserver_op
       .opt = *opt,
       .first_named_pipe = INVALID_HANDLE_VALUE,
   };
-  mtx_init(&serv->mtx, mtx_plain | mtx_recursive);
+  mtx_init(&serv->mtx, mtx_plain);
   atomic_store_explicit(&serv->closing, false, memory_order_relaxed);
   if (efailed(err)) {
     err = ethru(err);

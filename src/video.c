@@ -468,7 +468,7 @@ NODISCARD error video_create(struct video **const vpp, struct video_options cons
   *v = (struct video){
       .handle = opt->handle,
   };
-  mtx_init(&v->mtx, mtx_plain | mtx_recursive);
+  mtx_init(&v->mtx, mtx_plain);
 
   if (opt->filepath) {
     err = scpy(&v->filepath, opt->filepath);

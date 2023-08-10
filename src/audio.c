@@ -462,7 +462,7 @@ NODISCARD error audio_create(struct audio **const app, struct audio_options cons
       .video_start_time = opt->video_start_time,
       .handle = opt->handle,
   };
-  mtx_init(&a->mtx, mtx_plain | mtx_recursive);
+  mtx_init(&a->mtx, mtx_plain);
 
   if (opt->filepath) {
     err = scpy(&a->filepath, opt->filepath);
