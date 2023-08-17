@@ -65,7 +65,7 @@ https://github.com/oov/aviutl_ffmpeg_input/releases
 
 ファイル名に `hello-ffmpeg.mp4` のように `-ffmpeg` がついているファイルだけをこのプラグインでの読み込み対象にします。  
 他の読み込みプラグインと併用する場合に有用です。  
-デフォルトで有効です。
+デフォルトで無効です。
 
 #### 優先するデコーダー
 
@@ -73,6 +73,7 @@ https://github.com/oov/aviutl_ffmpeg_input/releases
 先に書いたものが優先されます。
 
 例えば `h264_cuvid,h264_qsv,libopenh264` と指定すると、`h264` のファイルを読み込もうとしたときに `h264_cuvid` で開き、それに失敗した場合は `h264_qsv` で、それでも駄目なら `libopenh264` で開きます。
+デフォルトですべての cuvid 系、qsv 系、libopenh264 を優先するようにしています。
 
 #### リソース管理モード
 

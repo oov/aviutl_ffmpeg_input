@@ -236,14 +236,22 @@ static NODISCARD error load(struct config *c) {
     err = ethru(err);
     goto cleanup;
   }
-  len = GetPrivateProfileStringA("global", "preferred_decoders", "", buf, buffer_size, filepath.ptr);
+  len = GetPrivateProfileStringA(
+      "global",
+      "preferred_decoders",
+      "av1_cuvid,h264_cuvid,hevc_cuvid,mjpeg_cuvid,mpeg1_cuvid,mpeg2_cuvid,mpeg4_cuvid,vc1_cuvid,vp8_cuvid,vp9_cuvid,"
+      "av1_qsv,h264_qsv,hevc_qsv,mjpeg_qsv,mpeg2_qsv,vc1_qsv,vp8_qsv,vp9_qsv,"
+      "libopenh264",
+      buf,
+      buffer_size,
+      filepath.ptr);
   buf[len] = '\0';
   err = config_set_preferred_decoders(c, buf);
   if (efailed(err)) {
     err = ethru(err);
     goto cleanup;
   }
-  err = config_set_need_postfix(c, GetPrivateProfileIntA("global", "need_postfix", 1, filepath.ptr) != 0);
+  err = config_set_need_postfix(c, GetPrivateProfileIntA("global", "need_postfix", 0, filepath.ptr) != 0);
   if (efailed(err)) {
     err = ethru(err);
     goto cleanup;
