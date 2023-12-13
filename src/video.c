@@ -158,7 +158,7 @@ static NODISCARD error seek(struct stream *stream, int frame) {
       goto cleanup;
     }
   }
-cleanup :
+cleanup:
 #if SHOWLOG_VIDEO_SEEK_SPEED
 {
   double const end = now();

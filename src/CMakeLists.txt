@@ -2,6 +2,8 @@ cmake_minimum_required(VERSION 3.10)
 project(ffmpeg_input C)
 enable_language(RC)
 
+option(FORMAT_SOURCES "execute clang-format" ON)
+
 add_subdirectory(3rd/ovbase)
 add_subdirectory(3rd/ovutil)
 
@@ -18,11 +20,14 @@ add_custom_target(copy_related_files
   COMMAND ${CMAKE_COMMAND} -E copy_directory "${FFMPEG_DIR}" "${EXPORT_DIR}/ffmpeg${FFMPEG_INPUT_BITSIZE}"
 )
 
-find_program(CLANG_FORMAT_EXE clang-format)
-file(GLOB sources "${CMAKE_CURRENT_SOURCE_DIR}/*.c" "${CMAKE_CURRENT_SOURCE_DIR}/*.h")
-add_custom_target(${PROJECT_NAME}_format
-  COMMAND ${CLANG_FORMAT_EXE} -style=file -i ${sources}
-)
+if(FORMAT_SOURCES)
+  file(GLOB_RECURSE sources LIST_DIRECTORIES false CONFIGURE_DEPENDS "*.h" "*.c")
+  list(FILTER sources EXCLUDE REGEX "${CMAKE_CURRENT_SOURCE_DIR}/3rd")
+  find_program(CLANG_FORMAT_EXE clang-format)
+  add_custom_target(${PROJECT_NAME}-format ALL
+    COMMAND ${CLANG_FORMAT_EXE} -style=file -i ${sources}
+  )
+endif()
 
 add_library(ffmpeg_input SHARED
   api.c
@@ -52,7 +57,7 @@ set_target_properties(ffmpeg_input PROPERTIES
   SUFFIX ""
   RUNTIME_OUTPUT_DIRECTORY "${EXPORT_DIR}"
 )
-add_dependencies(ffmpeg_input ${PROJECT_NAME}_format ${PROJECT_NAME}_generate_version_h copy_related_files)
+add_dependencies(ffmpeg_input ${PROJECT_NAME}-format ${PROJECT_NAME}_generate_version_h copy_related_files)
 add_executable(ffmpeg_test mapped.c ffmpeg_test.c)
 list(APPEND targets ffmpeg_test)
 add_executable(ipc_test ipccommon.c ipcclient.c ipcserver.c ipc_test.c)

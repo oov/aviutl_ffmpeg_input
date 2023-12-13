@@ -222,7 +222,7 @@ static NODISCARD error seek(struct audio *const a, struct stream *stream, int64_
       goto cleanup;
     }
   }
-cleanup :
+cleanup:
 #if SHOWLOG_AUDIO_SEEK_SPEED
 {
   double const end = now();
