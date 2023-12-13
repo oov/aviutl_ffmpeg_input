@@ -9,15 +9,47 @@ on:
       - "v[0-9]+.[0-9]+.[0-9]+"
 
 jobs:
-  build:
+  build64:
+    runs-on: windows-latest
+    strategy:
+      matrix:
+        include:
+          - msystem: CLANG64
+            arch: clang-x86_64
+    steps:
+      - uses: actions/checkout@v3
+        with:
+          submodules: recursive
+      - uses: msys2/setup-msys2@v2
+        with:
+          msystem: ${{ matrix.msystem }}
+          install: >-
+            git
+            mingw-w64-${{ matrix.arch }}-clang
+            mingw-w64-${{ matrix.arch }}-cmake
+            mingw-w64-${{ matrix.arch }}-compiler-rt
+            mingw-w64-${{ matrix.arch }}-lld
+            mingw-w64-${{ matrix.arch }}-ninja
+            mingw-w64-${{ matrix.arch }}-tools
+      - name: Run ninja
+        shell: msys2 {0}
+        run: |
+          mkdir -p build/64bit
+          cd build
+          rm -f 64bit/CMakeCache.txt && cmake -S .. -B 64bit --preset 64bit && cmake --build 64bit
+      - name: Upload binaries
+        uses: actions/upload-artifact@v3
+        with:
+          name: bin64
+          path: |
+            build/64bit/bin/**/*
+  build32:
     runs-on: windows-latest
     strategy:
       matrix:
         include:
           - msystem: CLANG32
             arch: clang-i686
-          - msystem: CLANG64
-            arch: clang-x86_64
     steps:
       - uses: actions/checkout@v3
         with:
@@ -36,17 +68,17 @@ jobs:
       - name: Build
         shell: msys2 {0}
         run: |
-          mkdir build
+          mkdir -p build/32bit
           cd build
-          rm -rf CMakeCache.txt && cmake -GNinja -DCMAKE_C_COMPILER=clang -DCMAKE_C_STANDARD=11 -DCMAKE_C_STANDARD_REQUIRED=ON -DCMAKE_C_EXTENSIONS=OFF -DCMAKE_EXPORT_COMPILE_COMMANDS=ON -DLEAK_DETECTOR=OFF -DALLOCATE_LOGGER=OFF -DCMAKE_BUILD_TYPE=Release -DCMAKE_RC_COMPILER=llvm-rc -DCMAKE_RC_FLAGS="-C 65001" .. && cmake --build . && ctest --output-on-failure
+          rm -f 32bit/CmakeCache.txt && cmake -S .. -B 32bit --preset 32bit && cmake --build 32bit
       - name: Upload binaries
         uses: actions/upload-artifact@v3
         with:
-          name: bin
+          name: bin32
           path: |
-            build/bin/**/*
+            build/32bit/bin/**/*
   create-release:
-    needs: [build]
+    needs: [build64, build32]
     runs-on: ubuntu-latest
     steps:
       - name: Get the version
@@ -56,7 +88,10 @@ jobs:
         uses: actions/download-artifact@v3
       - name: Zip
         run: |
-          cd bin && mv ffmpeg_input.aui ffmpeg_input-brdg64.aui && rm -rf ffmpeg32 && zip -r ../package.zip * && cd ..
+          cd bin64
+          cp ../bin32/ffmpeg_input.aui ./ffmpeg_input-brdg64.aui
+          zip -r ../package.zip *
+          cd ..
       - name: Create Release
         id: create_release
         uses: actions/create-release@v1

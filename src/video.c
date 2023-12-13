@@ -86,7 +86,7 @@ static inline void calc_current_frame(struct stream *const stream) {
     OutputDebugStringA(s);
   }
 #endif
-  if (stream->ffmpeg.frame->key_frame) {
+  if (stream->ffmpeg.frame->flags & AV_FRAME_FLAG_KEY) {
     stream->current_gop_intra_pts = stream->ffmpeg.frame->pts;
 #if SHOWLOG_VIDEO_GET_INTRA_INFO
     {
