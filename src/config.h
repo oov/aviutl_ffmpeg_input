@@ -23,7 +23,9 @@ char const *config_get_preferred_decoders(struct config const *const c);
 bool config_get_need_postfix(struct config const *const c);
 enum video_format_scaling_algorithm config_get_scaling(struct config const *const c);
 enum audio_index_mode config_get_audio_index_mode(struct config const *const c);
-bool config_get_invert_phase(struct config const *const c);
+enum audio_sample_rate config_get_audio_sample_rate(struct config const *const c);
+bool config_get_audio_use_sox(struct config const *const c);
+bool config_get_audio_invert_phase(struct config const *const c);
 
 NODISCARD error config_set_handle_manage_mode(struct config *const c,
                                               enum config_handle_manage_mode handle_manage_mode);
@@ -32,4 +34,6 @@ NODISCARD error config_set_preferred_decoders(struct config *const c, char const
 NODISCARD error config_set_need_postfix(struct config *const c, bool const need_postfix);
 NODISCARD error config_set_scaling(struct config *const c, enum video_format_scaling_algorithm scaling);
 NODISCARD error config_set_audio_index_mode(struct config *const c, enum audio_index_mode audio_index_mode);
-NODISCARD error config_set_invert_phase(struct config *const c, bool const invert_phase);
+NODISCARD error config_set_audio_sample_rate(struct config *const c, enum audio_sample_rate audio_sample_rate);
+NODISCARD error config_set_audio_use_sox(struct config *const c, bool const use_sox);
+NODISCARD error config_set_audio_invert_phase(struct config *const c, bool const invert_phase);

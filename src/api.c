@@ -333,15 +333,38 @@ static struct combo_items const audio_index_modes[] = {
     {0},
 };
 
+static struct combo_items const audio_sample_rates[] = {
+    {asr_original, L"変更しない"},
+    {asr_8000, L"8000Hz"},
+    {asr_11025, L"11025Hz"},
+    {asr_12000, L"12000Hz"},
+    {asr_16000, L"16000Hz"},
+    {asr_22050, L"22050Hz"},
+    {asr_24000, L"24000Hz"},
+    {asr_32000, L"32000Hz"},
+    {asr_44100, L"44100Hz"},
+    {asr_48000, L"48000Hz"},
+    {asr_64000, L"64000Hz"},
+    {asr_88200, L"88200Hz"},
+    {asr_96000, L"96000Hz"},
+    {asr_128000, L"128000Hz"},
+    {asr_176400, L"176400Hz"},
+    {asr_192000, L"192000Hz"},
+    {asr_256000, L"256000Hz"},
+    {0},
+};
+
 enum config_control {
   ID_BTN_ABOUT = 100,
   ID_CHK_NEED_POSTFIX = 1000,
   ID_EDT_DECODERS = 1001,
   ID_CMB_HANDLE_MANAGE_MODE = 1002,
   ID_CMB_NUMBER_OF_STREAMS = 1003,
-  ID_CMB_SCALING = 2000,
+  ID_CMB_VIDEO_SCALING = 2000,
   ID_CMB_AUDIO_INDEX_MODE = 3000,
-  ID_CHK_INVERT_PHASE = 3001,
+  ID_CMB_AUDIO_SAMPLE_RATE = 3001,
+  ID_CHK_AUDIO_USE_SOX = 3002,
+  ID_CHK_AUDIO_INVERT_PHASE = 3003,
 };
 
 static wchar_t *ver_to_str(wchar_t *const buf, char const *const ident, unsigned int ver) {
@@ -390,9 +413,11 @@ static INT_PTR CALLBACK config_wndproc(HWND const dlg, UINT const message, WPARA
     SetWindowTextA(GetDlgItem(dlg, ID_EDT_DECODERS), config_get_preferred_decoders(pr->config));
     set_combo(dlg, ID_CMB_HANDLE_MANAGE_MODE, handle_manage_modes, (int)(config_get_handle_manage_mode(pr->config)));
     set_combo(dlg, ID_CMB_NUMBER_OF_STREAMS, number_of_streams, (int)(config_get_number_of_stream(pr->config)));
-    set_combo(dlg, ID_CMB_SCALING, scaling_algorithms, (int)(config_get_scaling(pr->config)));
+    set_combo(dlg, ID_CMB_VIDEO_SCALING, scaling_algorithms, (int)(config_get_scaling(pr->config)));
     set_combo(dlg, ID_CMB_AUDIO_INDEX_MODE, audio_index_modes, (int)(config_get_audio_index_mode(pr->config)));
-    set_check(dlg, ID_CHK_INVERT_PHASE, config_get_invert_phase(pr->config));
+    set_combo(dlg, ID_CMB_AUDIO_SAMPLE_RATE, audio_sample_rates, (int)(config_get_audio_sample_rate(pr->config)));
+    set_check(dlg, ID_CHK_AUDIO_USE_SOX, config_get_audio_use_sox(pr->config));
+    set_check(dlg, ID_CHK_AUDIO_INVERT_PHASE, config_get_audio_invert_phase(pr->config));
     return TRUE;
   }
   case WM_DESTROY:
@@ -440,7 +465,7 @@ static INT_PTR CALLBACK config_wndproc(HWND const dlg, UINT const message, WPARA
         goto cleanup;
       }
       err = config_set_scaling(
-          pr->config, (enum video_format_scaling_algorithm)(get_combo(dlg, ID_CMB_SCALING, scaling_algorithms)));
+          pr->config, (enum video_format_scaling_algorithm)(get_combo(dlg, ID_CMB_VIDEO_SCALING, scaling_algorithms)));
       if (efailed(err)) {
         err = ethru(err);
         goto cleanup;
@@ -451,7 +476,18 @@ static INT_PTR CALLBACK config_wndproc(HWND const dlg, UINT const message, WPARA
         err = ethru(err);
         goto cleanup;
       }
-      err = config_set_invert_phase(pr->config, get_check(dlg, ID_CHK_INVERT_PHASE));
+      err = config_set_audio_sample_rate(
+          pr->config, (enum audio_sample_rate)(get_combo(dlg, ID_CMB_AUDIO_SAMPLE_RATE, audio_sample_rates)));
+      if (efailed(err)) {
+        err = ethru(err);
+        goto cleanup;
+      }
+      err = config_set_audio_use_sox(pr->config, get_check(dlg, ID_CHK_AUDIO_USE_SOX));
+      if (efailed(err)) {
+        err = ethru(err);
+        goto cleanup;
+      }
+      err = config_set_audio_invert_phase(pr->config, get_check(dlg, ID_CHK_AUDIO_INVERT_PHASE));
       if (efailed(err)) {
         err = ethru(err);
         goto cleanup;

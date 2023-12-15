@@ -9,9 +9,11 @@ struct config {
   enum video_format_scaling_algorithm scaling;
   enum config_handle_manage_mode handle_manage_mode;
   enum audio_index_mode audio_index_mode;
+  enum audio_sample_rate audio_sample_rate;
   int number_of_stream;
   bool need_postfix;
-  bool invert_phase;
+  bool audio_use_sox;
+  bool audio_invert_phase;
   bool modified;
 };
 
@@ -47,7 +49,11 @@ bool config_get_need_postfix(struct config const *const c) { return c->need_post
 
 enum audio_index_mode config_get_audio_index_mode(struct config const *const c) { return c->audio_index_mode; }
 
-bool config_get_invert_phase(struct config const *const c) { return c->invert_phase; }
+enum audio_sample_rate config_get_audio_sample_rate(struct config const *const c) { return c->audio_sample_rate; }
+
+bool config_get_audio_use_sox(struct config const *const c) { return c->audio_use_sox; }
+
+bool config_get_audio_invert_phase(struct config const *const c) { return c->audio_invert_phase; }
 
 NODISCARD error config_set_handle_manage_mode(struct config *const c,
                                               enum config_handle_manage_mode handle_manage_mode) {
@@ -167,14 +173,61 @@ NODISCARD error config_set_audio_index_mode(struct config *const c, enum audio_i
   return eok();
 }
 
-NODISCARD error config_set_invert_phase(struct config *const c, bool const invert_phase) {
+NODISCARD error config_set_audio_sample_rate(struct config *const c, enum audio_sample_rate audio_sample_rate) {
   if (!c) {
     return errg(err_invalid_arugment);
   }
-  if (c->invert_phase == !!invert_phase) {
+  if (c->audio_sample_rate == audio_sample_rate) {
     return eok();
   }
-  c->invert_phase = !!invert_phase;
+  switch ((int)audio_sample_rate) {
+  case asr_original:
+  case asr_8000:
+  case asr_11025:
+  case asr_12000:
+  case asr_16000:
+  case asr_22050:
+  case asr_24000:
+  case asr_32000:
+  case asr_44100:
+  case asr_48000:
+  case asr_64000:
+  case asr_88200:
+  case asr_96000:
+  case asr_128000:
+  case asr_176400:
+  case asr_192000:
+  case asr_256000:
+    break;
+  default:
+    audio_sample_rate = asr_original;
+    break;
+  }
+  c->audio_sample_rate = audio_sample_rate;
+  c->modified = true;
+  return eok();
+}
+
+NODISCARD error config_set_audio_use_sox(struct config *const c, bool const use_sox) {
+  if (!c) {
+    return errg(err_invalid_arugment);
+  }
+  if (c->audio_use_sox == !!use_sox) {
+    return eok();
+  }
+  c->audio_use_sox = !!use_sox;
+  c->modified = true;
+  return eok();
+}
+
+NODISCARD error config_set_audio_invert_phase(struct config *const c, bool const invert_phase) {
+  if (!c) {
+    return errg(err_invalid_arugment);
+  }
+  if (c->audio_invert_phase == !!invert_phase) {
+    return eok();
+  }
+  c->audio_invert_phase = !!invert_phase;
   c->modified = true;
   return eok();
 }
@@ -269,7 +322,18 @@ static NODISCARD error load(struct config *c) {
     err = ethru(err);
     goto cleanup;
   }
-  err = config_set_invert_phase(c, GetPrivateProfileIntA("audio", "invert_phase", 0, filepath.ptr) != 0);
+  err = config_set_audio_sample_rate(
+      c, (enum audio_sample_rate)(GetPrivateProfileIntA("audio", "audio_sample_rate", 0, filepath.ptr)));
+  if (efailed(err)) {
+    err = ethru(err);
+    goto cleanup;
+  }
+  err = config_set_audio_use_sox(c, GetPrivateProfileIntA("audio", "audio_use_sox", 0, filepath.ptr) != 0);
+  if (efailed(err)) {
+    err = ethru(err);
+    goto cleanup;
+  }
+  err = config_set_audio_invert_phase(c, GetPrivateProfileIntA("audio", "invert_phase", 0, filepath.ptr) != 0);
   if (efailed(err)) {
     err = ethru(err);
     goto cleanup;
@@ -302,7 +366,9 @@ NODISCARD error config_load(struct config *c) {
   c->need_postfix = tmp->need_postfix;
   c->scaling = tmp->scaling;
   c->audio_index_mode = tmp->audio_index_mode;
-  c->invert_phase = tmp->invert_phase;
+  c->audio_sample_rate = tmp->audio_sample_rate;
+  c->audio_use_sox = tmp->audio_use_sox;
+  c->audio_invert_phase = tmp->audio_invert_phase;
   c->modified = false;
 cleanup:
   config_destroy(&tmp);
@@ -350,7 +416,17 @@ NODISCARD error config_save(struct config *c) {
     err = errhr(HRESULT_FROM_WIN32(GetLastError()));
     goto cleanup;
   }
-  if (!WritePrivateProfileStringA("audio", "invert_phase", config_get_invert_phase(c) ? "1" : "0", filepath.ptr)) {
+  if (!WritePrivateProfileStringA(
+          "audio", "audio_sample_rate", ov_itoa((int64_t)(config_get_audio_sample_rate(c)), buf), filepath.ptr)) {
+    err = errhr(HRESULT_FROM_WIN32(GetLastError()));
+    goto cleanup;
+  }
+  if (!WritePrivateProfileStringA("audio", "audio_use_sox", config_get_audio_use_sox(c) ? "1" : "0", filepath.ptr)) {
+    err = errhr(HRESULT_FROM_WIN32(GetLastError()));
+    goto cleanup;
+  }
+  if (!WritePrivateProfileStringA(
+          "audio", "invert_phase", config_get_audio_invert_phase(c) ? "1" : "0", filepath.ptr)) {
     err = errhr(HRESULT_FROM_WIN32(GetLastError()));
     goto cleanup;
   }

@@ -25,7 +25,7 @@ struct stream {
   SwrContext *swr_context;
   uint8_t *swr_buf;
   int64_t current_sample_pos;
-  int64_t swr_buf_sample_pos;
+  int64_t swr_buf_sample_pos_asr;
   int swr_buf_len;
   int swr_buf_written;
   int current_samples;
@@ -49,8 +49,11 @@ struct audio {
   thrd_t thread;
   enum status status;
 
+  int actual_sample_rate;
   struct audioidx *idx;
   enum audio_index_mode index_mode;
+  enum audio_sample_rate sample_rate;
+  bool use_sox;
   bool wait_index;
 
   int64_t video_start_time;
@@ -67,25 +70,54 @@ static void stream_destroy(struct stream *const stream) {
   ffmpeg_close(&stream->ffmpeg);
 }
 
-static NODISCARD error stream_create(struct stream *const stream, struct ffmpeg_open_options const *const opt) {
+static NODISCARD error stream_create(struct stream *const stream,
+                                     struct ffmpeg_open_options const *const opt,
+                                     enum audio_sample_rate const sample_rate,
+                                     bool const use_sox,
+                                     int *const actual_sample_rate) {
   error err = ffmpeg_open(&stream->ffmpeg, opt);
   if (efailed(err)) {
     err = ethru(err);
     goto cleanup;
   }
+
+  int out_sample_rate;
+  switch (sample_rate) {
+  case asr_original:
+    out_sample_rate = stream->ffmpeg.stream->codecpar->sample_rate;
+    break;
+  case asr_8000:
+  case asr_11025:
+  case asr_12000:
+  case asr_16000:
+  case asr_22050:
+  case asr_24000:
+  case asr_32000:
+  case asr_44100:
+  case asr_48000:
+  case asr_64000:
+  case asr_88200:
+  case asr_96000:
+  case asr_128000:
+  case asr_176400:
+  case asr_192000:
+  case asr_256000:
+    out_sample_rate = (int)sample_rate;
+    break;
+  }
+
   stream->current_sample_pos = AV_NOPTS_VALUE;
-  stream->swr_buf_sample_pos = AV_NOPTS_VALUE;
-  stream->swr_buf_len = stream->ffmpeg.stream->codecpar->sample_rate * g_channels;
+  stream->swr_buf_sample_pos_asr = AV_NOPTS_VALUE;
+  stream->swr_buf_len = out_sample_rate * g_channels;
   int r = av_samples_alloc(&stream->swr_buf, NULL, 2, stream->swr_buf_len, AV_SAMPLE_FMT_S16, 0);
   if (r < 0) {
     err = errffmpeg(r);
     goto cleanup;
   }
-
   r = swr_alloc_set_opts2(&stream->swr_context,
                           &(AVChannelLayout)AV_CHANNEL_LAYOUT_STEREO,
                           g_sample_format,
-                          stream->ffmpeg.stream->codecpar->sample_rate,
+                          out_sample_rate,
                           &stream->ffmpeg.stream->codecpar->ch_layout,
                           stream->ffmpeg.stream->codecpar->format,
                           stream->ffmpeg.stream->codecpar->sample_rate,
@@ -95,12 +127,16 @@ static NODISCARD error stream_create(struct stream *const stream, struct ffmpeg_
     err = errffmpeg(r);
     goto cleanup;
   }
-  // TODO: would like to be able to use sox if it supports resampling in the future.
-  // av_opt_set_int(stream->swr_context, "engine", SWR_ENGINE_SOXR, 0);
+  if (use_sox) {
+    av_opt_set_int(stream->swr_context, "engine", SWR_ENGINE_SOXR, 0);
+  }
   r = swr_init(stream->swr_context);
   if (r < 0) {
     err = errffmpeg(r);
     goto cleanup;
+  }
+  if (actual_sample_rate) {
+    *actual_sample_rate = out_sample_rate;
   }
 cleanup:
   if (efailed(err)) {
@@ -110,17 +146,17 @@ cleanup:
 }
 
 void audio_get_info(struct audio const *const a, struct info_audio *const ai) {
-  ai->sample_rate = a->streams[0].ffmpeg.stream->codecpar->sample_rate;
+  ai->sample_rate = a->actual_sample_rate;
   ai->channels = g_channels;
   ai->bit_depth = sizeof(sample_t) * 8;
-  ai->samples = av_rescale_q(a->streams[0].ffmpeg.fctx->duration,
-                             AV_TIME_BASE_Q,
-                             av_make_q(1, a->streams[0].ffmpeg.stream->codecpar->sample_rate));
+  ai->samples = av_rescale_q(a->streams[0].ffmpeg.fctx->duration, AV_TIME_BASE_Q, av_make_q(1, a->actual_sample_rate));
 #if SHOWLOG_AUDIO_GET_INFO
   char s[256];
   ov_snprintf(s,
               256,
+              NULL,
               "ainfo duration: %lld / samples: %lld / start_time: %lld",
+
               a->streams[0].ffmpeg.fctx->duration,
               ai->samples,
               a->streams[0].ffmpeg.stream->start_time);
@@ -150,7 +186,9 @@ static void calc_current_position(struct audio *const a, struct stream *const st
   char s[256];
   ov_snprintf(s,
               256,
+              NULL,
               "a samplepos: %lld key_frame: %d, pts: %lld start_time: %lld time_base:%f sample_rate:%d",
+
               stream->current_sample_pos,
               stream->ffmpeg.frame->key_frame,
               stream->ffmpeg.frame->pts,
@@ -184,7 +222,9 @@ static NODISCARD error seek(struct audio *const a, struct stream *stream, int64_
     char s[256];
     ov_snprintf(s,
                 256,
+                NULL,
                 "req_pts:%lld sample: %lld tb: %f sr: %d",
+
                 time_stamp,
                 sample,
                 av_q2d(av_inv_q(stream->ffmpeg.stream->time_base)),
@@ -213,7 +253,8 @@ static NODISCARD error seek(struct audio *const a, struct stream *stream, int64_
   while (stream->current_sample_pos + stream->ffmpeg.frame->nb_samples < sample) {
 #if SHOWLOG_AUDIO_SEEK
     char s[256];
-    ov_snprintf(s, 256, "csp: %lld / smp: %lld", stream->current_sample_pos + stream->ffmpeg.frame->nb_samples, sample);
+    ov_snprintf(
+        s, 256, NULL, "csp: %lld / smp: %lld", stream->current_sample_pos + stream->ffmpeg.frame->nb_samples, sample);
     OutputDebugStringA(s);
 #endif
     err = grab(stream);
@@ -227,7 +268,7 @@ cleanup:
 {
   double const end = now();
   char s[256];
-  ov_snprintf(s, 256, "a seek: %0.4fs", end - start);
+  ov_snprintf(s, 256, NULL, "a seek: %0.4fs", end - start);
   OutputDebugStringA(s);
 }
 #endif
@@ -244,14 +285,14 @@ static NODISCARD error stream_read(struct audio *const a,
                                    int *const written) {
 #if SHOWLOG_AUDIO_READ
   char s[256];
-  ov_snprintf(s, 256, "audio_read ofs: %lld / len: %d", offset, length);
+  ov_snprintf(s, 256, NULL, "audio_read ofs: %lld / len: %d", offset, length);
   OutputDebugStringA(s);
 #endif
   error err = eok();
   uint8_t *dest = buf;
   int read = 0;
   int r = 0;
-  int64_t readpos = 0;
+  int64_t readpos_asr = 0;
 
 start:
   if (read == length) {
@@ -259,9 +300,13 @@ start:
   }
 
 readbuf:
-  readpos = offset + read;
-  if (readpos >= stream->swr_buf_sample_pos && readpos < (stream->swr_buf_sample_pos + stream->swr_buf_written)) {
-    int const bufpos = (int)(readpos - stream->swr_buf_sample_pos);
+  readpos_asr = offset + read;
+  if (readpos_asr >= stream->swr_buf_sample_pos_asr &&
+      readpos_asr < (stream->swr_buf_sample_pos_asr + stream->swr_buf_written)) {
+#if SHOWLOG_AUDIO_READ
+    OutputDebugStringA(__FILE_NAME__ " readbuf");
+#endif
+    int const bufpos = (int)(readpos_asr - stream->swr_buf_sample_pos_asr);
     int const samples = imin(stream->swr_buf_written - bufpos, (int)(length - read));
     memcpy(
         dest + (read * g_sample_size), stream->swr_buf + (bufpos * g_sample_size), (size_t)(samples * g_sample_size));
@@ -270,23 +315,31 @@ readbuf:
   }
 
   // flushswr:
+#if SHOWLOG_AUDIO_READ
+  OutputDebugStringA(__FILE_NAME__ " flushswr");
+#endif
+  stream->swr_buf_sample_pos_asr += stream->swr_buf_written;
   r = swr_convert(stream->swr_context, &stream->swr_buf, stream->swr_buf_len, NULL, 0);
   if (r < 0) {
     err = errffmpeg(r);
     goto cleanup;
   }
+  stream->swr_buf_written = r;
   if (r) {
-    stream->swr_buf_sample_pos += stream->swr_buf_written;
-    stream->swr_buf_written = r;
     goto readbuf;
   }
 
   // seek:
-  if (readpos < stream->current_sample_pos ||
-      readpos >= stream->current_sample_pos + stream->ffmpeg.stream->codecpar->sample_rate) {
-    if (readpos < a->first_sample_pos) {
+  if (readpos_asr < stream->swr_buf_sample_pos_asr ||
+      readpos_asr >= stream->swr_buf_sample_pos_asr + a->actual_sample_rate) {
+    if (readpos_asr < a->first_sample_pos) {
       goto inject_silence;
     }
+#if SHOWLOG_AUDIO_READ
+    OutputDebugStringA(__FILE_NAME__ " seek");
+#endif
+    int64_t const readpos = av_rescale_q(
+        readpos_asr, av_make_q(1, a->actual_sample_rate), av_make_q(1, stream->ffmpeg.stream->codecpar->sample_rate));
     err = seek(a, stream, readpos);
     if (efailed(err)) {
       err = ethru(err);
@@ -294,6 +347,9 @@ readbuf:
     }
     goto convert;
   }
+#if SHOWLOG_AUDIO_READ
+  OutputDebugStringA(__FILE_NAME__ " grab");
+#endif
   err = grab(stream);
   if (efailed(err)) {
     err = ethru(err);
@@ -301,6 +357,9 @@ readbuf:
   }
 
 convert:
+#if SHOWLOG_AUDIO_READ
+  OutputDebugStringA(__FILE_NAME__ " convert");
+#endif
   r = swr_convert(stream->swr_context,
                   (void *)&stream->swr_buf,
                   stream->swr_buf_len,
@@ -310,12 +369,17 @@ convert:
     err = errffmpeg(r);
     goto cleanup;
   }
-  stream->swr_buf_sample_pos = stream->current_sample_pos;
+  stream->swr_buf_sample_pos_asr = av_rescale_q(stream->current_sample_pos,
+                                                av_make_q(1, stream->ffmpeg.stream->codecpar->sample_rate),
+                                                av_make_q(1, a->actual_sample_rate));
   stream->swr_buf_written = r;
   goto readbuf;
 
 inject_silence:
-  r = swr_inject_silence(stream->swr_context, imin(stream->swr_buf_len, (int)(a->first_sample_pos - readpos)));
+#if SHOWLOG_AUDIO_READ
+  OutputDebugStringA(__FILE_NAME__ " inject_silence");
+#endif
+  r = swr_inject_silence(stream->swr_context, imin(stream->swr_buf_len, (int)(a->first_sample_pos - readpos_asr)));
   if (r < 0) {
     err = errffmpeg(r);
     goto cleanup;
@@ -325,7 +389,7 @@ inject_silence:
     err = errffmpeg(r);
     goto cleanup;
   }
-  stream->swr_buf_sample_pos = readpos;
+  stream->swr_buf_sample_pos_asr = readpos_asr;
   stream->swr_buf_written = r;
   goto readbuf;
 
@@ -361,7 +425,10 @@ static int create_sub_stream(void *userdata) {
                                   .handle = a->handle,
                                   .media_type = AVMEDIA_TYPE_AUDIO,
                                   .codec = a->streams[0].ffmpeg.codec,
-                              });
+                              },
+                              a->sample_rate,
+                              a->use_sox,
+                              NULL);
     if (efailed(err)) {
       err = ethru(err);
       ereport(err);
@@ -389,8 +456,8 @@ static struct stream *find_stream(struct audio *const a, int64_t const offset) {
   struct stream *oldest = NULL;
   for (size_t i = 0; i < num_stream; ++i) {
     struct stream *stream = a->streams + i;
-    if (stream->swr_buf_sample_pos != AV_NOPTS_VALUE && stream->swr_buf_sample_pos <= offset &&
-        offset < stream->swr_buf_sample_pos + stream->swr_buf_written) {
+    if (stream->swr_buf_sample_pos_asr != AV_NOPTS_VALUE && stream->swr_buf_sample_pos_asr <= offset &&
+        offset < stream->swr_buf_sample_pos_asr + stream->swr_buf_written) {
       exact = stream;
       break;
     }
@@ -406,7 +473,8 @@ static struct stream *find_stream(struct audio *const a, int64_t const offset) {
 #if SHOWLOG_AUDIO_SEEK_FIND_STREAM
   {
     char s[256];
-    ov_snprintf(s, 256, "a find stream #%d ofs:%lld cur:%lld", exact - a->streams, offset, exact->current_sample_pos);
+    ov_snprintf(
+        s, 256, NULL, "a find stream #%d ofs:%lld cur:%lld", exact - a->streams, offset, exact->current_sample_pos);
     OutputDebugStringA(s);
   }
 #endif
@@ -459,6 +527,8 @@ NODISCARD error audio_create(struct audio **const app, struct audio_options cons
   }
   *a = (struct audio){
       .index_mode = opt->index_mode,
+      .sample_rate = opt->sample_rate,
+      .use_sox = opt->use_sox,
       .video_start_time = opt->video_start_time,
       .handle = opt->handle,
   };
@@ -487,7 +557,10 @@ NODISCARD error audio_create(struct audio **const app, struct audio_options cons
                           .handle = opt->handle,
                           .media_type = AVMEDIA_TYPE_AUDIO,
                           .preferred_decoders = opt->preferred_decoders,
-                      });
+                      },
+                      opt->sample_rate,
+                      opt->use_sox,
+                      &a->actual_sample_rate);
   if (efailed(err)) {
     err = ethru(err);
     goto cleanup;

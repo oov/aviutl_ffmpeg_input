@@ -81,6 +81,8 @@ static NODISCARD error create_audio(struct stream *sp, struct audio **a) {
                                .num_stream = (size_t)(config_get_number_of_stream(sp->config)),
                                .video_start_time = sp->video_start_time,
                                .index_mode = config_get_audio_index_mode(sp->config),
+                               .sample_rate = config_get_audio_sample_rate(sp->config),
+                               .use_sox = config_get_audio_use_sox(sp->config),
                            });
   if (efailed(err)) {
     err = ethru(err);
@@ -297,7 +299,7 @@ static NODISCARD error stream_read_audio(struct stream *const sp,
     err = ethru(err);
     goto cleanup;
   }
-  if (config_get_invert_phase(sp->config)) {
+  if (config_get_audio_invert_phase(sp->config)) {
     int16_t *w = buf;
     for (int i = 0; i < wr; ++i) {
       *w = -*w;
