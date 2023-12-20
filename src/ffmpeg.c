@@ -296,9 +296,9 @@ static NODISCARD error open_codec(AVCodec const *const codec,
   }
   fs->codec = codec;
   fs->cctx = ctx;
-  err = ffmpeg_grab(fs);
-  if (efailed(err)) {
-    err = ethru(err);
+  r = ffmpeg_grab(fs);
+  if (r < 0) {
+    err = errffmpeg(r);
     goto cleanup;
   }
 cleanup:
@@ -349,6 +349,9 @@ void ffmpeg_close(struct ffmpeg_stream *const fs) {
   if (fs->packet) {
     av_packet_free(&fs->packet);
   }
+  if (fs->frame2) {
+    av_frame_free(&fs->frame2);
+  }
   if (fs->frame) {
     av_frame_free(&fs->frame);
   }
@@ -372,6 +375,7 @@ NODISCARD error ffmpeg_open_without_codec(struct ffmpeg_stream *const fs, struct
   }
   AVFormatContext *fctx = NULL;
   AVFrame *frame = NULL;
+  AVFrame *frame2 = NULL;
   AVPacket *packet = NULL;
   error err = create_format_context(&fctx,
                                     &(struct create_format_context_options){
@@ -401,6 +405,11 @@ NODISCARD error ffmpeg_open_without_codec(struct ffmpeg_stream *const fs, struct
     err = emsg(err_type_generic, err_fail, &native_unmanaged_const(NSTR("av_frame_alloc failed")));
     goto cleanup;
   }
+  frame2 = av_frame_alloc();
+  if (!frame2) {
+    err = emsg(err_type_generic, err_fail, &native_unmanaged_const(NSTR("av_frame_alloc failed")));
+    goto cleanup;
+  }
   packet = av_packet_alloc();
   if (!packet) {
     err = emsg(err_type_generic, err_fail, &native_unmanaged_const(NSTR("av_packet_alloc failed")));
@@ -409,12 +418,16 @@ NODISCARD error ffmpeg_open_without_codec(struct ffmpeg_stream *const fs, struct
   *fs = (struct ffmpeg_stream){
       .fctx = fctx,
       .frame = frame,
+      .frame2 = frame2,
       .packet = packet,
   };
 cleanup:
   if (efailed(err)) {
     if (packet) {
       av_packet_free(&packet);
+    }
+    if (frame2) {
+      av_frame_free(&frame2);
     }
     if (frame) {
       av_frame_free(&frame);
@@ -503,7 +516,16 @@ NODISCARD error ffmpeg_seek_bytes(struct ffmpeg_stream *const fs, int64_t const 
 }
 #endif
 
-static int inline receive_frame(struct ffmpeg_stream *const fs) { return avcodec_receive_frame(fs->cctx, fs->frame); }
+static int inline receive_frame(struct ffmpeg_stream *const fs) {
+  int const r = avcodec_receive_frame(fs->cctx, fs->frame2);
+  if (r < 0) {
+    return r;
+  }
+  AVFrame *const temp = fs->frame;
+  fs->frame = fs->frame2;
+  fs->frame2 = temp;
+  return r;
+}
 
 int ffmpeg_read_packet(struct ffmpeg_stream *const fs) {
   for (;;) {
@@ -523,20 +545,18 @@ static int inline send_packet(struct ffmpeg_stream *const fs) { return avcodec_s
 
 static int inline send_null_packet(struct ffmpeg_stream *const fs) { return avcodec_send_packet(fs->cctx, NULL); }
 
-NODISCARD error ffmpeg_grab(struct ffmpeg_stream *const fs) {
-  error err = eok();
+int ffmpeg_grab(struct ffmpeg_stream *const fs) {
   int r = 0;
   for (;;) {
     r = receive_frame(fs);
     switch (r) {
     case 0:
       goto cleanup;
-    case AVERROR(EAGAIN):
     case AVERROR_EOF:
+    case AVERROR(EAGAIN):
     case AVERROR_INPUT_CHANGED:
       break;
     default:
-      err = errffmpeg(r);
       goto cleanup;
     }
     r = ffmpeg_read_packet(fs);
@@ -547,11 +567,9 @@ NODISCARD error ffmpeg_grab(struct ffmpeg_stream *const fs) {
       case 0:
       case AVERROR(EAGAIN):
         continue;
-      case AVERROR_EOF:
-        err = errffmpeg(r); // decoder has been flushed
+      case AVERROR_EOF: // decoder has been flushed
         goto cleanup;
       default:
-        err = errffmpeg(r);
         goto cleanup;
       }
     }
@@ -563,10 +581,9 @@ NODISCARD error ffmpeg_grab(struct ffmpeg_stream *const fs) {
       // not ready to accept avcodec_send_packet, must call avcodec_receive_frame.
       continue;
     default:
-      err = errffmpeg(r);
       goto cleanup;
     }
   }
 cleanup:
-  return err;
+  return r;
 }

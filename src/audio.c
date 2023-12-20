@@ -200,14 +200,13 @@ static void calc_current_position(struct audio *const a, struct stream *const st
 }
 
 static NODISCARD error grab(struct stream *const stream) {
-  error err = ffmpeg_grab(&stream->ffmpeg);
-  if (efailed(err)) {
-    goto cleanup;
+  int const r = ffmpeg_grab(&stream->ffmpeg);
+  if (r < 0) {
+    return errffmpeg(r);
   }
   stream->current_sample_pos += stream->ffmpeg.frame->nb_samples;
   stream->current_samples = stream->ffmpeg.frame->nb_samples;
-cleanup:
-  return err;
+  return eok();
 }
 
 static NODISCARD error seek(struct audio *const a, struct stream *stream, int64_t sample) {
@@ -238,9 +237,9 @@ static NODISCARD error seek(struct audio *const a, struct stream *stream, int64_
       err = ethru(err);
       goto cleanup;
     }
-    err = ffmpeg_grab(&stream->ffmpeg);
-    if (efailed(err)) {
-      err = ethru(err);
+    int const r = ffmpeg_grab(&stream->ffmpeg);
+    if (r < 0) {
+      err = errffmpeg(r);
       goto cleanup;
     }
     calc_current_position(a, stream);
