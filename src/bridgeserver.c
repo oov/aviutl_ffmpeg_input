@@ -88,9 +88,13 @@ static void ipc_handler_open(struct ipcserver_context *const ctx) {
     }
     *h = (struct handle){
         .ih = ih,
-        .frame_size = (size_t)(ii.format->biWidth * ii.format->biBitCount / 8 * longabs(ii.format->biHeight)),
-        .sample_size = (size_t)(ii.audio_format->nChannels * ii.audio_format->wBitsPerSample / 8),
     };
+    if (ii.format) {
+      h->frame_size = (size_t)(ii.format->biWidth * ii.format->biBitCount / 8 * longabs(ii.format->biHeight));
+    }
+    if (ii.audio_format) {
+      h->sample_size = (size_t)(ii.audio_format->nChannels * ii.audio_format->wBitsPerSample / 8);
+    }
   }
   err = ctx->grow_buffer(ctx, sizeof(struct bridge_event_open_response));
   if (efailed(err)) {

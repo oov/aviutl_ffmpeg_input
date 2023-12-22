@@ -193,17 +193,21 @@ static BOOL ffmpeg_input_info_get(INPUT_HANDLE ih, INPUT_INFO *iip) {
     g_bih_size = (size_t)resp->video_format_size;
   }
   memcpy(g_bih, ptr + sizeof(struct bridge_event_get_info_response), (size_t)resp->video_format_size);
-  if (!g_wfex || g_wfex_size < (size_t)resp->audio_format_size) {
-    err = mem(&g_wfex, (size_t)resp->audio_format_size, 1);
-    if (efailed(err)) {
-      err = ethru(err);
-      goto cleanup;
+
+  if (resp->audio_format_size > 0) {
+    if (!g_wfex || g_wfex_size < (size_t)resp->audio_format_size) {
+      size_t const sz = (size_t)resp->audio_format_size;
+      err = mem(&g_wfex, sz, 1);
+      if (efailed(err)) {
+        err = ethru(err);
+        goto cleanup;
+      }
+      g_wfex_size = sz;
     }
-    g_wfex_size = (size_t)resp->audio_format_size;
+    memcpy(g_wfex,
+           ptr + sizeof(struct bridge_event_get_info_response) + resp->video_format_size,
+           (size_t)resp->audio_format_size);
   }
-  memcpy(g_wfex,
-         ptr + sizeof(struct bridge_event_get_info_response) + resp->video_format_size,
-         (size_t)resp->audio_format_size);
   *iip = (INPUT_INFO){
       .flag = resp->flag,
       .rate = resp->rate,
@@ -212,7 +216,7 @@ static BOOL ffmpeg_input_info_get(INPUT_HANDLE ih, INPUT_INFO *iip) {
       .format = g_bih,
       .format_size = resp->video_format_size,
       .audio_n = resp->audio_samples,
-      .audio_format = g_wfex,
+      .audio_format = resp->audio_format_size ? g_wfex : NULL,
       .audio_format_size = resp->audio_format_size,
       .handler = resp->handler,
   };
