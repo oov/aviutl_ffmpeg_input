@@ -2,10 +2,13 @@
 
 #include "ffmpeg.h"
 #include "now.h"
+#include "progress.h"
 
 #include "ovthreads.h"
 
-#ifndef NDEBUG
+#define SHOWLOG_PROGRESS 0
+
+#if SHOWLOG_PROGRESS
 #  include <ovprintf.h>
 #endif
 
@@ -52,9 +55,7 @@ static int indexer(void *userdata) {
   fs.stream = ffmpeg_find_stream(&fs, AVMEDIA_TYPE_AUDIO);
 
   int64_t const video_start_time = av_rescale_q(ip->video_start_time, AV_TIME_BASE_Q, fs.stream->time_base);
-#ifndef NDEBUG
   int64_t const duration = av_rescale_q(fs.fctx->duration, AV_TIME_BASE_Q, fs.stream->time_base);
-#endif
 
   mtx_lock(&ip->mtx);
   ictx->err = eok();
@@ -77,7 +78,7 @@ static int indexer(void *userdata) {
       goto cleanup;
     }
     if (samples == AV_NOPTS_VALUE) {
-#ifndef NDEBUG
+#if SHOWLOG_PROGRESS
       char s[256];
       int64_t fstart_time = av_rescale_q(fs.fctx->start_time, AV_TIME_BASE_Q, fs.stream->time_base);
       ov_snprintf(s,
@@ -99,7 +100,7 @@ static int indexer(void *userdata) {
       err = errg(err_fail);
       goto cleanup;
     }
-#ifndef NDEBUG
+#if SHOWLOG_PROGRESS
     if (fs.packet->pts < 1000) {
       char s[256];
       ov_snprintf(s, 256, NULL, "aidx: pts: %lld / samplepos: %lld", fs.packet->pts, packet_samples);
@@ -109,9 +110,10 @@ static int indexer(void *userdata) {
     bool update_progress = false;
     double const n = now();
     if (n > time) {
+      progress_set(ip, (size_t)((10000 * fs.packet->pts) / duration));
       time = n + interval;
       update_progress = true;
-#ifndef NDEBUG
+#if SHOWLOG_PROGRESS
       char s[256];
       wsprintfA(s, "aidx: %d%%", (int)((100 * fs.packet->pts) / duration));
       OutputDebugStringA(s);
@@ -132,7 +134,8 @@ static int indexer(void *userdata) {
     samples += packet_samples;
   }
 cleanup:
-#ifndef NDEBUG
+  progress_set(ip, 10000);
+#if SHOWLOG_PROGRESS
   OutputDebugStringA("index completed");
 #endif
   ffmpeg_close(&fs);
@@ -226,7 +229,7 @@ cleanup:
 }
 
 int64_t audioidx_get(struct audioidx *const ip, int64_t const pts, bool const wait_index) {
-#ifndef NDEBUG
+#if SHOWLOG_PROGRESS
   OutputDebugStringA(wait_index ? "audioidx_get wait_index" : "audioidx_get fast");
 #endif
   error err = eok();

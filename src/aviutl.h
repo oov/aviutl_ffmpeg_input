@@ -16,6 +16,12 @@
 #  endif
 #endif // __GNUC__
 
+#define func_init filter_func_init
+#define func_exit filter_func_exit
+#include "3rd/aviutl_sdk/filter.h"
+#undef func_init
+#undef func_exit
+
 #include "3rd/aviutl_sdk/input.h"
 
 #ifdef __GNUC__
@@ -47,9 +53,10 @@ static inline HWND find_aviutl_window(void) {
 
 struct own_api {
   INPUT_PLUGIN_TABLE *original_api;
-  int (*func_open_ex)(char const *filepath, INPUT_HANDLE *ih);
+  int (*func_open_ex)(char const *filepath, INPUT_HANDLE *ih, HWND exedit_window);
   int (*func_read_video_ex)(INPUT_HANDLE ih, int frame, void *buf, bool const saving);
   int (*func_read_audio_ex)(INPUT_HANDLE ih, int start, int length, void *buf, bool const saving);
 };
 
 bool aviutl_is_saving(void);
+HWND aviutl_get_exedit_window(void);

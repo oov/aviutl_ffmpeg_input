@@ -75,7 +75,7 @@ static void ipc_handler_open(struct ipcserver_context *const ctx) {
     err = ethru(err);
     goto cleanup;
   }
-  int eno = g_api->func_open_ex(filepath.ptr, &ih);
+  int eno = g_api->func_open_ex(filepath.ptr, &ih, (HWND)req->exedit_window);
   if (eno) {
     err = emsg(err_type_errno, eno, &native_unmanaged_const(NSTR("func_open failed")));
     goto cleanup;

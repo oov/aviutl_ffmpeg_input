@@ -35,6 +35,7 @@ enum bridge_event_id {
 #endif // __GNUC__
 
 struct PACKED bridge_event_open_request {
+  uint64_t exedit_window;
   int32_t filepath_size;
 };
 

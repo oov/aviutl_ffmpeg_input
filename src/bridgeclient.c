@@ -395,7 +395,10 @@ cleanup:
   return TRUE;
 }
 
-static NODISCARD error call_open(struct ipcclient *const ipcc, char const *const filepath, struct handle *h) {
+static NODISCARD error call_open(struct ipcclient *const ipcc,
+                                 char const *const filepath,
+                                 uint64_t const exedit_window,
+                                 struct handle *const h) {
   if (!ipcc || !filepath || !h) {
     return errg(err_invalid_arugment);
   }
@@ -410,6 +413,7 @@ static NODISCARD error call_open(struct ipcclient *const ipcc, char const *const
   }
   struct bridge_event_open_request *req = buffer;
   *req = (struct bridge_event_open_request){
+      .exedit_window = exedit_window,
       .filepath_size = (int32_t)l,
   };
   memcpy(req + 1, filepath, l);
@@ -439,7 +443,7 @@ cleanup:
   return err;
 }
 
-static int ffmpeg_input_open_ex(char const *filepath, INPUT_HANDLE *ih) {
+static int ffmpeg_input_open_ex(char const *filepath, INPUT_HANDLE *ih, HWND exedit_window) {
   if (atomic_load(&g_running_state) != rs_running || !filepath || !ih) {
     return EINVAL;
   }
@@ -448,7 +452,7 @@ static int ffmpeg_input_open_ex(char const *filepath, INPUT_HANDLE *ih) {
   error err = eok();
   struct handle *h = NULL;
   struct handle tmp = {0};
-  err = call_open(g_ipcc, filepath, &tmp);
+  err = call_open(g_ipcc, filepath, (uint64_t)(exedit_window), &tmp);
   if (efailed(err)) {
     eno = EIO;
     err = ethru(err);
@@ -501,7 +505,7 @@ cleanup:
 
 static INPUT_HANDLE ffmpeg_input_open(char *filepath) {
   INPUT_HANDLE ih = NULL;
-  ffmpeg_input_open_ex(filepath, &ih);
+  ffmpeg_input_open_ex(filepath, &ih, aviutl_get_exedit_window());
   return ih;
 }
 
@@ -598,7 +602,7 @@ static bool restore_handle(void const *const item, void *const udata) {
   struct handle_map_item *hmi = ov_deconster_(item);
   struct restore_handle_context *ctx = udata;
   struct handle tmp = {0};
-  ctx->err = call_open(ctx->ipcc, hmi->key->filepath.ptr, &tmp);
+  ctx->err = call_open(ctx->ipcc, hmi->key->filepath.ptr, (uint64_t)(aviutl_get_exedit_window()), &tmp);
   if (efailed(ctx->err)) {
     ctx->err = ethru(ctx->err);
     return false;

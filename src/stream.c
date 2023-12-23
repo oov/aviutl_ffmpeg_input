@@ -6,6 +6,7 @@
 
 #include "audio.h"
 #include "config.h"
+#include "progress.h"
 #include "video.h"
 
 struct stream {
@@ -335,6 +336,8 @@ struct streammap {
 };
 
 NODISCARD error streammap_create(struct streammap **smpp) {
+  progress_init();
+
   struct streammap *smp = NULL;
   error err = mem(&smp, 1, sizeof(struct streammap));
   if (efailed(err)) {
@@ -405,6 +408,7 @@ void streammap_destroy(struct streammap **const smpp) {
 #ifndef NDEBUG
   OutputDebugStringA("streammap destroyed");
 #endif
+  progress_destroy();
 }
 
 static NODISCARD error find_from_pool(struct streammap *const smp, wchar_t const *const filepath, struct stream **sp) {

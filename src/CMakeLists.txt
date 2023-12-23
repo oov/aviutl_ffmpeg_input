@@ -47,6 +47,7 @@ add_library(ffmpeg_input SHARED
   mapped.c
   now.c
   process.c
+  progress.c
   stream.c
   video.c
 )

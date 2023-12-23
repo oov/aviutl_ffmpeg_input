@@ -7,6 +7,7 @@
 #include "config.h"
 #include "error.h"
 #include "ffmpeg.h"
+#include "progress.h"
 #include "stream.h"
 #include "version.h"
 
@@ -102,13 +103,14 @@ static BOOL ffmpeg_input_close(INPUT_HANDLE ih) {
   return TRUE;
 }
 
-static int ffmpeg_input_open_ex(char const *filepath, INPUT_HANDLE *ih) {
+static int ffmpeg_input_open_ex(char const *filepath, INPUT_HANDLE *ih, HWND exedit_window) {
   if (!filepath || !ih) {
     return EINVAL;
   }
   if (!g_ready) {
     return EACCES;
   }
+  progress_set_exedit_window((size_t)exedit_window);
   struct wstr ws = {0};
   intptr_t idx = 0;
   int eno = 0;
@@ -140,7 +142,7 @@ cleanup:
 
 static INPUT_HANDLE ffmpeg_input_open(char *filepath) {
   INPUT_HANDLE ih = NULL;
-  ffmpeg_input_open_ex(filepath, &ih);
+  ffmpeg_input_open_ex(filepath, &ih, aviutl_get_exedit_window());
   return ih;
 }
 
