@@ -7,11 +7,11 @@
   },
   "configurePresets": [
     {
-      "name": "32bit",
-      "displayName": "32bit DLL build",
-      "description": "32bit DLL build using Ninja generator",
+      "name": "default",
+      "displayName": "default Release build",
+      "description": "default Release build using Ninja generator",
       "generator": "Ninja",
-      "binaryDir": "${sourceDir}/build/32bit",
+      "binaryDir": "${sourceDir}/build/default",
       "cacheVariables": {
         "CMAKE_BUILD_TYPE": "Release",
         "CMAKE_C_COMPILER": "clang",
@@ -24,17 +24,6 @@
         "LEAK_DETECTOR": "OFF",
         "ALLOCATE_LOGGER": "OFF",
         "FORMAT_SOURCES": "ON"
-      },
-      "environment": {}
-    },
-    {
-      "name": "64bit",
-      "inherits": "32bit",
-      "displayName": "64bit EXE build",
-      "description": "64bit EXE build using Ninja generator",
-      "generator": "Ninja",
-      "binaryDir": "${sourceDir}/build/64bit",
-      "cacheVariables": {
       },
       "environment": {}
     }

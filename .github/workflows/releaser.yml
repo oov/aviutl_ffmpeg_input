@@ -9,99 +9,28 @@ on:
       - "v[0-9]+.[0-9]+.[0-9]+"
 
 jobs:
-  build64:
-    runs-on: windows-latest
-    strategy:
-      matrix:
-        include:
-          - msystem: CLANG64
-            arch: clang-x86_64
+  create_release:
+    runs-on: ubuntu-20.04
     steps:
       - uses: actions/checkout@v3
         with:
           submodules: recursive
-      - uses: msys2/setup-msys2@v2
-        with:
-          msystem: ${{ matrix.msystem }}
-          install: >-
-            git
-            mingw-w64-${{ matrix.arch }}-clang
-            mingw-w64-${{ matrix.arch }}-cmake
-            mingw-w64-${{ matrix.arch }}-compiler-rt
-            mingw-w64-${{ matrix.arch }}-lld
-            mingw-w64-${{ matrix.arch }}-ninja
-            mingw-w64-${{ matrix.arch }}-tools
-      - name: Run ninja
-        shell: msys2 {0}
-        run: |
-          mkdir -p build/64bit
-          cd build
-          rm -f 64bit/CMakeCache.txt && cmake -S .. -B 64bit --preset 64bit && cmake --build 64bit
-      - name: Upload binaries
-        uses: actions/upload-artifact@v3
-        with:
-          name: bin64
-          path: |
-            build/64bit/bin/**/*
-  build32:
-    runs-on: windows-latest
-    strategy:
-      matrix:
-        include:
-          - msystem: CLANG32
-            arch: clang-i686
-    steps:
-      - uses: actions/checkout@v3
-        with:
-          submodules: recursive
-      - uses: msys2/setup-msys2@v2
-        with:
-          msystem: ${{ matrix.msystem }}
-          install: >-
-            git
-            mingw-w64-${{ matrix.arch }}-clang
-            mingw-w64-${{ matrix.arch }}-cmake
-            mingw-w64-${{ matrix.arch }}-compiler-rt
-            mingw-w64-${{ matrix.arch }}-lld
-            mingw-w64-${{ matrix.arch }}-ninja
-            mingw-w64-${{ matrix.arch }}-tools
-      - name: Build
-        shell: msys2 {0}
-        run: |
-          mkdir -p build/32bit
-          cd build
-          rm -f 32bit/CmakeCache.txt && cmake -S .. -B 32bit --preset 32bit && cmake --build 32bit
-      - name: Upload binaries
-        uses: actions/upload-artifact@v3
-        with:
-          name: bin32
-          path: |
-            build/32bit/bin/**/*
-  create-release:
-    needs: [build64, build32]
-    runs-on: ubuntu-latest
-    steps:
       - name: Get the version
         id: get_version
         run: echo "tag=${GITHUB_REF/refs\/tags\//}" >> $GITHUB_OUTPUT
-      - name: Download artifacts
-        uses: actions/download-artifact@v3
-      - name: Zip
+      - name: Build
+        shell: bash
         run: |
-          cd bin64
-          cp ../bin32/ffmpeg_input.aui ./ffmpeg_input-brdg64.aui
-          zip -r ../package.zip *
-          cd ..
+          bash -x build.bash --skip-tests --zip
+          mv build/Release/dist/Release.zip build/Release/dist/ffmpeg_input_${{ steps.get_version.outputs.tag }}.zip
       - name: Create Release
         id: create_release
-        uses: actions/create-release@v1
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        uses: softprops/action-gh-release@v1
         with:
-          tag_name: ${{ github.ref }}
-          release_name: ${{ github.ref }}
+          tag_name: ${{ steps.get_version.outputs.tag }}
           draft: true
           prerelease: false
+          files: build/Release/dist/*
           body: |
             ### ダウンロード
             
@@ -117,13 +46,3 @@ jobs:
             ### 変更点
             
             - ＊＊＊＊
-      - name: Upload Release Asset
-        id: upload-release-asset
-        uses: actions/upload-release-asset@v1
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        with:
-          upload_url: ${{ steps.create_release.outputs.upload_url }}
-          asset_path: package.zip
-          asset_name: ffmpeg_input_${{ steps.get_version.outputs.tag }}.zip
-          asset_content_type: application/zip
