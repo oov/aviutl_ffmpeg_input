@@ -4,7 +4,7 @@ ffmpeg_input
 [FFmpeg](https://www.ffmpeg.org/) を利用した AviUtl 用の入力プラグインです。  
 以下のような特徴があります。
 
-- `movie-ffmpeg.mp4` などのようにファイル名が `-ffmpeg` が終わるものしか読み込まない
+- `movie-ffmpeg.mp4` のようにファイル名が `-ffmpeg` が終わるものしか読み込まないオプション
   - L-SMASH Works との併用を想定しており、ファイル名によって使い分けができます
 - 巨大なファイルの読み込みがそれなりに速い代わりにシークが不正確
   - 精度が重要な場合は従来通り L-SMASH Works をご利用ください
