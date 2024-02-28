@@ -1,4 +1,4 @@
-name: releaser
+name: test-build
 
 on:
   pull_request:
@@ -7,7 +7,7 @@ on:
       - main
 
 jobs:
-  create_release:
+  build:
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
