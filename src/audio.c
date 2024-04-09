@@ -190,7 +190,7 @@ static void calc_current_position(struct audio *const a, struct stream *const st
               "a samplepos: %lld key_frame: %d, pts: %lld start_time: %lld time_base:%f sample_rate:%d",
 
               stream->current_sample_pos,
-              stream->ffmpeg.frame->key_frame,
+              (stream->ffmpeg.frame->flags & AV_FRAME_FLAG_KEY) != 0,
               stream->ffmpeg.frame->pts,
               stream->ffmpeg.stream->start_time,
               av_q2d(stream->ffmpeg.stream->time_base),
