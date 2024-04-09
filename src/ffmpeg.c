@@ -289,6 +289,7 @@ static NODISCARD error open_codec(AVCodec const *const codec,
     err = errffmpeg(r);
     goto cleanup;
   }
+  ctx->pkt_timebase = fs->stream->time_base;
   r = avcodec_open2(ctx, codec, options);
   if (r < 0) {
     err = errffmpeg(r);
