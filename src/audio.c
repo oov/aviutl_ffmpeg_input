@@ -176,9 +176,9 @@ static void calc_current_position(struct audio *const a, struct stream *const st
     // Instead, it avoids the accumulation of errors by not using
     // the received pts as long as it continues to read frames.
     int64_t const video_start_time =
-        av_rescale_q(a->video_start_time, AV_TIME_BASE_Q, stream->ffmpeg.stream->time_base);
+        av_rescale_q(a->video_start_time, AV_TIME_BASE_Q, stream->ffmpeg.cctx->pkt_timebase);
     stream->current_sample_pos = av_rescale_q(stream->ffmpeg.frame->pts - video_start_time,
-                                              stream->ffmpeg.stream->time_base,
+                                              stream->ffmpeg.cctx->pkt_timebase,
                                               av_make_q(1, stream->ffmpeg.stream->codecpar->sample_rate));
   }
   stream->current_samples = stream->ffmpeg.frame->nb_samples;
@@ -187,13 +187,14 @@ static void calc_current_position(struct audio *const a, struct stream *const st
   ov_snprintf(s,
               256,
               NULL,
-              "a samplepos: %lld key_frame: %d, pts: %lld start_time: %lld time_base:%f sample_rate:%d",
+              "a samplepos: %lld samples: %lld key_frame: %d, pts: %lld start_time: %lld time_base:%f sample_rate:%d",
 
               stream->current_sample_pos,
+              stream->current_samples,
               (stream->ffmpeg.frame->flags & AV_FRAME_FLAG_KEY) != 0,
               stream->ffmpeg.frame->pts,
               stream->ffmpeg.stream->start_time,
-              av_q2d(stream->ffmpeg.stream->time_base),
+              av_q2d(stream->ffmpeg.cctx->pkt_timebase),
               stream->ffmpeg.stream->codecpar->sample_rate);
   OutputDebugStringA(s);
 #endif
@@ -216,7 +217,7 @@ static NODISCARD error seek(struct audio *const a, struct stream *stream, int64_
 #endif
   error err = eok();
   int64_t time_stamp = av_rescale_q(
-      sample, av_inv_q(stream->ffmpeg.stream->time_base), av_make_q(stream->ffmpeg.stream->codecpar->sample_rate, 1));
+      sample, av_inv_q(stream->ffmpeg.cctx->pkt_timebase), av_make_q(stream->ffmpeg.stream->codecpar->sample_rate, 1));
 #if SHOWLOG_AUDIO_SEEK
   {
     char s[256];
@@ -227,7 +228,7 @@ static NODISCARD error seek(struct audio *const a, struct stream *stream, int64_
 
                 time_stamp,
                 sample,
-                av_q2d(av_inv_q(stream->ffmpeg.stream->time_base)),
+                av_q2d(av_inv_q(stream->ffmpeg.cctx->pkt_timebase)),
                 stream->ffmpeg.stream->codecpar->sample_rate);
     OutputDebugStringA(s);
   }
@@ -250,7 +251,33 @@ static NODISCARD error seek(struct audio *const a, struct stream *stream, int64_
     }
     break;
   }
-  while (stream->current_sample_pos + stream->ffmpeg.frame->nb_samples < sample) {
+#if 0
+  if (stream->current_sample_pos < sample) {
+    // https://ffmpeg.org/doxygen/6.0/group__lavc__packet.html#gga9a80bfcacc586b483a973272800edb97a2093332d8086d25a04942ede61007f6a
+    // below code is depend on structure packing, so it's not portable.
+    // struct data_skip_samples {
+    //   uint32_t start; // number of samples to skip from start of this packet
+    //   uint32_t end; // number of samples to skip from end of this packet
+    //   uint8_t reason_start; // reason for start skip
+    //   uint8_t reason_end; // reason for end skip (0=padding silence, 1=convergence)
+    // } __attribute__((packed));
+    uint8_t *data = av_packet_get_side_data(stream->ffmpeg.packet, AV_PKT_DATA_SKIP_SAMPLES, NULL);
+    if (!data) {
+      data = av_packet_new_side_data(stream->ffmpeg.packet, AV_PKT_DATA_SKIP_SAMPLES, 10);
+    }
+    if (data) {
+      *(uint32_t *)((void *)data) = (uint32_t)(sample - stream->current_sample_pos);
+      memset(data + 4, 0, 6);
+    }
+    int r = avcodec_send_packet(stream->ffmpeg.cctx, stream->ffmpeg.packet);
+    if (r < 0) {
+      err = errffmpeg(r);
+      err = ethru(err);
+      goto cleanup;
+    }
+  }
+#endif
+  while (stream->current_sample_pos + stream->ffmpeg.frame->nb_samples <= sample) {
 #if SHOWLOG_AUDIO_SEEK
     char s[256];
     ov_snprintf(
@@ -301,8 +328,10 @@ start:
 
 readbuf:
   readpos_asr = offset + read;
-  if (readpos_asr >= stream->swr_buf_sample_pos_asr &&
-      readpos_asr < (stream->swr_buf_sample_pos_asr + stream->swr_buf_written)) {
+  if (readpos_asr < stream->swr_buf_sample_pos_asr) {
+    goto seek;
+  }
+  if (readpos_asr < (stream->swr_buf_sample_pos_asr + stream->swr_buf_written)) {
 #if SHOWLOG_AUDIO_READ
     OutputDebugStringA(__FILE_NAME__ " readbuf");
 #endif
@@ -329,7 +358,7 @@ readbuf:
     goto readbuf;
   }
 
-  // seek:
+seek:
   if (readpos_asr < stream->swr_buf_sample_pos_asr ||
       readpos_asr >= stream->swr_buf_sample_pos_asr + a->actual_sample_rate) {
     if (readpos_asr < a->first_sample_pos) {
@@ -594,5 +623,5 @@ int64_t audio_get_start_time(struct audio const *const a) {
   if (!a || !a->streams[0].ffmpeg.stream) {
     return AV_NOPTS_VALUE;
   }
-  return av_rescale_q(a->streams[0].ffmpeg.stream->start_time, a->streams[0].ffmpeg.stream->time_base, AV_TIME_BASE_Q);
+  return av_rescale_q(a->streams[0].ffmpeg.stream->start_time, a->streams[0].ffmpeg.cctx->pkt_timebase, AV_TIME_BASE_Q);
 }

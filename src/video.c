@@ -96,7 +96,7 @@ void video_get_info(struct video const *const v, struct info_video *const vi) {
 static inline void calc_current_frame(struct stream *const stream) {
   stream->current_frame = av_rescale_q(stream->ffmpeg.frame->pts - stream->ffmpeg.stream->start_time,
                                        stream->ffmpeg.stream->avg_frame_rate,
-                                       av_inv_q(stream->ffmpeg.stream->time_base));
+                                       av_inv_q(stream->ffmpeg.cctx->pkt_timebase));
 #if SHOWLOG_VIDEO_CURRENT_FRAME
   {
     char s[256];
@@ -108,7 +108,7 @@ static inline void calc_current_frame(struct stream *const stream) {
                 (int)stream->ffmpeg.frame->pts,
                 stream->ffmpeg.frame->key_frame ? 1 : 0,
                 (int)stream->ffmpeg.stream->start_time,
-                av_q2d(stream->ffmpeg.stream->time_base),
+                av_q2d(stream->ffmpeg.cctx->pkt_timebase),
                 av_q2d(stream->ffmpeg.stream->avg_frame_rate));
     OutputDebugStringA(s);
   }
@@ -154,7 +154,7 @@ static NODISCARD error seek(struct stream *stream, int frame) {
 #endif
   error err = eok();
   int64_t time_stamp =
-      av_rescale_q(frame, av_inv_q(stream->ffmpeg.stream->time_base), stream->ffmpeg.stream->avg_frame_rate);
+      av_rescale_q(frame, av_inv_q(stream->ffmpeg.cctx->pkt_timebase), stream->ffmpeg.stream->avg_frame_rate);
 #if SHOWLOG_VIDEO_SEEK
   {
     char s[256];
@@ -164,7 +164,7 @@ static NODISCARD error seek(struct stream *stream, int frame) {
                 "req_pts:%lld, frame: %d tb: %f fr: %f",
                 time_stamp,
                 frame,
-                av_q2d(av_inv_q(stream->ffmpeg.stream->time_base)),
+                av_q2d(av_inv_q(stream->ffmpeg.cctx->pkt_timebase)),
                 av_q2d(stream->ffmpeg.stream->avg_frame_rate));
     OutputDebugStringA(s);
   }
@@ -308,7 +308,7 @@ static struct stream *find_stream(struct video *const v, int64_t const frame, bo
   // find same gop
   if (avformat_index_get_entries_count(v->streams[0].ffmpeg.stream) > 1) {
     int64_t const time_stamp = av_rescale_q(
-        frame, av_inv_q(v->streams[0].ffmpeg.stream->time_base), v->streams[0].ffmpeg.stream->avg_frame_rate);
+        frame, av_inv_q(v->streams[0].ffmpeg.cctx->pkt_timebase), v->streams[0].ffmpeg.stream->avg_frame_rate);
     AVIndexEntry const *const idx =
         avformat_index_get_entry_from_timestamp(v->streams[0].ffmpeg.stream, time_stamp, AVSEEK_FLAG_BACKWARD);
     int64_t const gop_intra_pts = idx->timestamp;
@@ -588,5 +588,5 @@ int64_t video_get_start_time(struct video const *const v) {
   if (!v) {
     return AV_NOPTS_VALUE;
   }
-  return av_rescale_q(v->streams[0].ffmpeg.stream->start_time, v->streams[0].ffmpeg.stream->time_base, AV_TIME_BASE_Q);
+  return av_rescale_q(v->streams[0].ffmpeg.stream->start_time, v->streams[0].ffmpeg.cctx->pkt_timebase, AV_TIME_BASE_Q);
 }

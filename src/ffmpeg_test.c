@@ -92,7 +92,7 @@ static void test_seek(void) {
   if (!TEST_SUCCEEDED_F(err)) {
     goto cleanup;
   }
-  int64_t const time_stamp = av_rescale_q(126, av_inv_q(fs.stream->time_base), fs.stream->avg_frame_rate);
+  int64_t const time_stamp = av_rescale_q(126, av_inv_q(fs.cctx->pkt_timebase), fs.stream->avg_frame_rate);
   if (!TEST_SUCCEEDED_F(ffmpeg_seek(&fs, time_stamp))) {
     goto cleanup;
   }
@@ -132,7 +132,7 @@ static void test_byte_seek(void) {
   if (!TEST_SUCCEEDED_F(err)) {
     goto cleanup;
   }
-  int64_t const time_stamp = av_rescale_q(126, av_inv_q(fs.stream->time_base), fs.stream->avg_frame_rate);
+  int64_t const time_stamp = av_rescale_q(126, av_inv_q(fs.cctx->pkt_timebase), fs.stream->avg_frame_rate);
   if (!TEST_SUCCEEDED_F(ffmpeg_seek(&fs, time_stamp))) {
     goto cleanup;
   }
