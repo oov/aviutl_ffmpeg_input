@@ -200,11 +200,12 @@ static void calc_current_position(struct audio *const a, struct stream *const st
 }
 
 static NODISCARD error grab(struct stream *const stream) {
+  int const old_samples = stream->current_samples;
   int const r = ffmpeg_grab(&stream->ffmpeg);
   if (r < 0) {
     return errffmpeg(r);
   }
-  stream->current_sample_pos += stream->ffmpeg.frame->nb_samples;
+  stream->current_sample_pos += old_samples;
   stream->current_samples = stream->ffmpeg.frame->nb_samples;
   return eok();
 }
