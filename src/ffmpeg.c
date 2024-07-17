@@ -332,6 +332,13 @@ static NODISCARD error open_preferred_codec(char const *const decoders,
         wchar_t buf[1024];
         wsprintfW(buf, L"failed open codec with \"%hs\".", preferred->name);
         ereportmsg(err, &native_unmanaged_const(buf));
+        // If the codec is not loaded properly, the next codec may not be loaded properly, so reset stream position.
+        // This was encountered when reading Sintel_1080_10s_20MB.mp4.
+        // https://test-videos.co.uk/sintel/mp4-av1
+        int const r = avformat_seek_file(fs->fctx, fs->stream->index, INT64_MIN, INT64_MIN, INT64_MIN, 0);
+        if (r < 0) {
+          return errffmpeg(r);
+        }
         continue;
       }
       goto cleanup;
