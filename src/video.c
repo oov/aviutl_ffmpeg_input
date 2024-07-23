@@ -106,7 +106,7 @@ static inline void calc_current_frame(struct stream *const stream) {
                 "v frame: %d pts: %d key_frame: %d start_time: %d time_base:%f avg_frame_rate:%f",
                 (int)stream->current_frame,
                 (int)stream->ffmpeg.frame->pts,
-                stream->ffmpeg.frame->key_frame ? 1 : 0,
+                stream->ffmpeg.frame->flags & AV_FRAME_FLAG_KEY ? 1 : 0,
                 (int)stream->ffmpeg.stream->start_time,
                 av_q2d(stream->ffmpeg.cctx->pkt_timebase),
                 av_q2d(stream->ffmpeg.stream->avg_frame_rate));
@@ -155,21 +155,24 @@ static NODISCARD error seek(struct stream *stream, int frame) {
   error err = eok();
   int64_t time_stamp =
       av_rescale_q(frame, av_inv_q(stream->ffmpeg.cctx->pkt_timebase), stream->ffmpeg.stream->avg_frame_rate);
-#if SHOWLOG_VIDEO_SEEK
-  {
-    char s[256];
-    ov_snprintf(s,
-                256,
-                NULL,
-                "req_pts:%lld, frame: %d tb: %f fr: %f",
-                time_stamp,
-                frame,
-                av_q2d(av_inv_q(stream->ffmpeg.cctx->pkt_timebase)),
-                av_q2d(stream->ffmpeg.stream->avg_frame_rate));
-    OutputDebugStringA(s);
+  if (stream->ffmpeg.stream->start_time != AV_NOPTS_VALUE) {
+    time_stamp += stream->ffmpeg.stream->start_time;
   }
-#endif
   for (;;) {
+#if SHOWLOG_VIDEO_SEEK
+    {
+      char s[256];
+      ov_snprintf(s,
+                  256,
+                  NULL,
+                  "req_pts:%lld, frame: %d tb: %f fr: %f",
+                  time_stamp,
+                  frame,
+                  av_q2d(av_inv_q(stream->ffmpeg.cctx->pkt_timebase)),
+                  av_q2d(stream->ffmpeg.stream->avg_frame_rate));
+      OutputDebugStringA(s);
+    }
+#endif
     err = ffmpeg_seek(&stream->ffmpeg, time_stamp);
     if (efailed(err)) {
       err = ethru(err);
@@ -189,7 +192,7 @@ static NODISCARD error seek(struct stream *stream, int frame) {
       goto cleanup;
     }
     if (stream->current_frame > frame) {
-      time_stamp = stream->ffmpeg.frame->pts - 1;
+      time_stamp -= (int64_t)(av_q2d(av_inv_q(stream->ffmpeg.cctx->pkt_timebase)));
       continue;
     }
     break;
@@ -307,33 +310,38 @@ static struct stream *find_stream(struct video *const v, int64_t const frame, bo
 
   // find same gop
   if (avformat_index_get_entries_count(v->streams[0].ffmpeg.stream) > 1) {
-    int64_t const time_stamp = av_rescale_q(
+    int64_t time_stamp = av_rescale_q(
         frame, av_inv_q(v->streams[0].ffmpeg.cctx->pkt_timebase), v->streams[0].ffmpeg.stream->avg_frame_rate);
+    if (v->streams[0].ffmpeg.stream->start_time != AV_NOPTS_VALUE) {
+      time_stamp += v->streams[0].ffmpeg.stream->start_time;
+    }
     AVIndexEntry const *const idx =
         avformat_index_get_entry_from_timestamp(v->streams[0].ffmpeg.stream, time_stamp, AVSEEK_FLAG_BACKWARD);
-    int64_t const gop_intra_pts = idx->timestamp;
-    // find nearest stream
-    struct stream *nearest = NULL;
-    int64_t gap = INT64_MAX;
-    for (size_t i = 0; i < num_stream; ++i) {
-      struct stream *const stream = v->streams + i;
-      if (stream->current_gop_intra_pts != gop_intra_pts || frame < stream->current_frame) {
-        continue;
+    if (idx) {
+      int64_t const gop_intra_pts = idx->timestamp;
+      // find nearest stream
+      struct stream *nearest = NULL;
+      int64_t gap = INT64_MAX;
+      for (size_t i = 0; i < num_stream; ++i) {
+        struct stream *const stream = v->streams + i;
+        if (stream->current_gop_intra_pts != gop_intra_pts || frame < stream->current_frame) {
+          continue;
+        }
+        if (nearest == NULL || gap > frame - stream->current_frame) {
+          nearest = stream;
+        }
       }
-      if (nearest == NULL || gap > frame - stream->current_frame) {
-        nearest = stream;
-      }
-    }
-    if (nearest) {
-      nearest->ts = ts;
-      *need_seek = false;
+      if (nearest) {
+        nearest->ts = ts;
+        *need_seek = false;
 #if SHOWLOG_VIDEO_FIND_STREAM
-      char s[256];
-      ov_snprintf(
-          s, 256, NULL, "find stream #%zu same gop(%lld)", nearest - v->streams, frame - nearest->current_frame);
-      OutputDebugStringA(s);
+        char s[256];
+        ov_snprintf(
+            s, 256, NULL, "find stream #%zu same gop(%lld)", nearest - v->streams, frame - nearest->current_frame);
+        OutputDebugStringA(s);
 #endif
-      return nearest;
+        return nearest;
+      }
     }
   }
   // it seems should seek, so we choose stream to use by LRU.
@@ -585,7 +593,7 @@ cleanup:
 }
 
 int64_t video_get_start_time(struct video const *const v) {
-  if (!v) {
+  if (!v || !v->streams[0].ffmpeg.stream || v->streams[0].ffmpeg.stream->start_time == AV_NOPTS_VALUE) {
     return AV_NOPTS_VALUE;
   }
   return av_rescale_q(v->streams[0].ffmpeg.stream->start_time, v->streams[0].ffmpeg.cctx->pkt_timebase, AV_TIME_BASE_Q);

@@ -217,6 +217,9 @@ static NODISCARD error seek(struct audio *const a, struct stream *stream, int64_
   error err = eok();
   int64_t time_stamp = av_rescale_q(
       sample, av_inv_q(stream->ffmpeg.cctx->pkt_timebase), av_make_q(stream->ffmpeg.stream->codecpar->sample_rate, 1));
+  if (stream->ffmpeg.stream->start_time != AV_NOPTS_VALUE) {
+    time_stamp += stream->ffmpeg.stream->start_time;
+  }
 #if SHOWLOG_AUDIO_SEEK
   {
     char s[256];
@@ -224,7 +227,6 @@ static NODISCARD error seek(struct audio *const a, struct stream *stream, int64_
                 256,
                 NULL,
                 "req_pts:%lld sample: %lld tb: %f sr: %d",
-
                 time_stamp,
                 sample,
                 av_q2d(av_inv_q(stream->ffmpeg.cctx->pkt_timebase)),
@@ -619,7 +621,7 @@ cleanup:
 }
 
 int64_t audio_get_start_time(struct audio const *const a) {
-  if (!a || !a->streams[0].ffmpeg.stream) {
+  if (!a || !a->streams[0].ffmpeg.stream || a->streams[0].ffmpeg.stream->start_time == AV_NOPTS_VALUE) {
     return AV_NOPTS_VALUE;
   }
   return av_rescale_q(a->streams[0].ffmpeg.stream->start_time, a->streams[0].ffmpeg.cctx->pkt_timebase, AV_TIME_BASE_Q);
