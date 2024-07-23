@@ -187,8 +187,7 @@ static void calc_current_position(struct audio *const a, struct stream *const st
   ov_snprintf(s,
               256,
               NULL,
-              "a samplepos: %lld samples: %lld key_frame: %d, pts: %lld start_time: %lld time_base:%f sample_rate:%d",
-
+              "a samplepos: %lld samples: %ld key_frame: %d, pts: %lld start_time: %lld time_base:%f sample_rate:%d",
               stream->current_sample_pos,
               stream->current_samples,
               (stream->ffmpeg.frame->flags & AV_FRAME_FLAG_KEY) != 0,
