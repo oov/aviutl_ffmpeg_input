@@ -10,6 +10,7 @@
 
 #define SHOWLOG_AUDIO_GET_INFO 0
 #define SHOWLOG_AUDIO_CURRENT_FRAME 0
+#define SHOWLOG_AUDIO_REPORT_INDEX_ENTRIES 0
 #define SHOWLOG_AUDIO_SEEK 0
 #define SHOWLOG_AUDIO_SEEK_ADJUST 0
 #define SHOWLOG_AUDIO_SEEK_SPEED 0
@@ -212,6 +213,13 @@ static NODISCARD error grab(struct stream *const stream) {
 }
 
 static NODISCARD error seek(struct audio *const a, struct stream *stream, int64_t sample) {
+#if SHOWLOG_AUDIO_REPORT_INDEX_ENTRIES
+  {
+    char s[256];
+    ov_snprintf(s, 256, NULL, "a index entries: %d", avformat_index_get_entries_count(stream->ffmpeg.stream));
+    OutputDebugStringA(s);
+  }
+#endif
 #if SHOWLOG_AUDIO_SEEK_SPEED
   double const start = now();
 #endif
