@@ -247,7 +247,7 @@ static NODISCARD error seek(struct audio *const a, struct stream *stream, int64_
     }
     calc_current_position(a, stream);
     if (stream->current_sample_pos > sample) {
-      time_stamp = stream->ffmpeg.frame->pts - 1;
+      time_stamp -= (int64_t)(av_q2d(av_inv_q(stream->ffmpeg.cctx->pkt_timebase)));
       continue;
     }
     break;
