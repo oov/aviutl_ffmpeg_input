@@ -11,6 +11,7 @@
 #define SHOWLOG_AUDIO_GET_INFO 0
 #define SHOWLOG_AUDIO_CURRENT_FRAME 0
 #define SHOWLOG_AUDIO_SEEK 0
+#define SHOWLOG_AUDIO_SEEK_ADJUST 0
 #define SHOWLOG_AUDIO_SEEK_SPEED 0
 #define SHOWLOG_AUDIO_SEEK_FIND_STREAM 0
 #define SHOWLOG_AUDIO_READ 0
@@ -247,6 +248,20 @@ static NODISCARD error seek(struct audio *const a, struct stream *stream, int64_
     }
     calc_current_position(a, stream);
     if (stream->current_sample_pos > sample) {
+#if SHOWLOG_AUDIO_SEEK_ADJUST
+      {
+        char s[256];
+        ov_snprintf(s,
+                    256,
+                    NULL,
+                    "a adjust target: %lld current: %lld rewind: %f",
+                    sample,
+                    stream->current_sample_pos,
+                    av_q2d(av_inv_q(stream->ffmpeg.cctx->pkt_timebase)));
+        OutputDebugStringA(s);
+      }
+#endif
+      // rewind 1s
       time_stamp -= (int64_t)(av_q2d(av_inv_q(stream->ffmpeg.cctx->pkt_timebase)));
       continue;
     }

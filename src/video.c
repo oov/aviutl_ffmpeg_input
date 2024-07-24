@@ -12,6 +12,7 @@
 #define SHOWLOG_VIDEO_CURRENT_FRAME 0
 #define SHOWLOG_VIDEO_INIT_BENCH 0
 #define SHOWLOG_VIDEO_SEEK 0
+#define SHOWLOG_VIDEO_SEEK_ADJUST 0
 #define SHOWLOG_VIDEO_SEEK_SPEED 0
 #define SHOWLOG_VIDEO_FIND_STREAM 0
 #define SHOWLOG_VIDEO_READ 0
@@ -192,6 +193,20 @@ static NODISCARD error seek(struct stream *stream, int frame) {
       goto cleanup;
     }
     if (stream->current_frame > frame) {
+#if SHOWLOG_VIDEO_SEEK_ADJUST
+      {
+        char s[256];
+        ov_snprintf(s,
+                    256,
+                    NULL,
+                    "v adjust target: %d current: %lld rewind: %f",
+                    frame,
+                    stream->current_frame,
+                    av_q2d(av_inv_q(stream->ffmpeg.cctx->pkt_timebase)));
+        OutputDebugStringA(s);
+      }
+#endif
+      // rewind 1s
       time_stamp -= (int64_t)(av_q2d(av_inv_q(stream->ffmpeg.cctx->pkt_timebase)));
       continue;
     }
