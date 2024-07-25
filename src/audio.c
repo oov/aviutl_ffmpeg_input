@@ -61,6 +61,22 @@ struct audio {
   int64_t first_sample_pos;
 };
 
+static inline int64_t get_start_time(struct stream *const stream) {
+  return stream->ffmpeg.stream->start_time == AV_NOPTS_VALUE ? 0 : stream->ffmpeg.stream->start_time;
+}
+
+static inline int64_t pts_to_sample_pos(int64_t const pts, struct stream *const stream) {
+  return av_rescale_q(pts - get_start_time(stream),
+                      stream->ffmpeg.cctx->pkt_timebase,
+                      av_make_q(1, stream->ffmpeg.stream->codecpar->sample_rate));
+}
+
+static inline int64_t sample_pos_to_pts(int64_t const sample, struct stream *const stream) {
+  return av_rescale_q(
+             sample, av_make_q(1, stream->ffmpeg.stream->codecpar->sample_rate), stream->ffmpeg.cctx->pkt_timebase) +
+         get_start_time(stream);
+}
+
 static void stream_destroy(struct stream *const stream) {
   if (stream->swr_context) {
     swr_free(&stream->swr_context);
@@ -176,11 +192,7 @@ static void calc_current_position(struct audio *const a, struct stream *const st
     // This program allows inaccurate values.
     // Instead, it avoids the accumulation of errors by not using
     // the received pts as long as it continues to read frames.
-    stream->current_sample_pos =
-        av_rescale_q(stream->ffmpeg.frame->pts -
-                         (stream->ffmpeg.stream->start_time == AV_NOPTS_VALUE ? 0 : stream->ffmpeg.stream->start_time),
-                     stream->ffmpeg.cctx->pkt_timebase,
-                     av_make_q(1, stream->ffmpeg.stream->codecpar->sample_rate));
+    stream->current_sample_pos = pts_to_sample_pos(stream->ffmpeg.packet->pts, stream);
   }
   stream->current_samples = stream->ffmpeg.frame->nb_samples;
 #if SHOWLOG_AUDIO_CURRENT_FRAME
@@ -223,10 +235,7 @@ static NODISCARD error seek(struct audio *const a, struct stream *stream, int64_
   double const start = now();
 #endif
   error err = eok();
-  int64_t time_stamp = av_rescale_q(sample,
-                                    av_inv_q(stream->ffmpeg.cctx->pkt_timebase),
-                                    av_make_q(stream->ffmpeg.stream->codecpar->sample_rate, 1)) +
-                       (stream->ffmpeg.stream->start_time == AV_NOPTS_VALUE ? 0 : stream->ffmpeg.stream->start_time);
+  int64_t time_stamp = sample_pos_to_pts(sample, stream);
 #if SHOWLOG_AUDIO_SEEK
   {
     char s[256];
@@ -616,8 +625,7 @@ NODISCARD error audio_create(struct audio **const app, struct audio_options cons
     goto cleanup;
   }
   a->len = 1;
-  calc_current_position(a, a->streams);
-  a->first_sample_pos = a->streams[0].current_sample_pos;
+  a->first_sample_pos = pts_to_sample_pos(a->streams[0].ffmpeg.stream->start_time, a->streams);
 
   if (a->index_mode != aim_noindex) {
     err = audioidx_create(&a->idx,
