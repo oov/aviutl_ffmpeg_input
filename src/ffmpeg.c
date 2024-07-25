@@ -1,6 +1,6 @@
 #include "ffmpeg.h"
 
-#define USE_FILE_MAPPING 1
+#define USE_FILE_MAPPING 0
 
 #if USE_FILE_MAPPING
 #  include "mapped.h"
