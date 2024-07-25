@@ -58,7 +58,6 @@ struct audio {
   bool use_sox;
   bool wait_index;
 
-  int64_t video_start_time;
   int64_t first_sample_pos;
 };
 
@@ -177,11 +176,11 @@ static void calc_current_position(struct audio *const a, struct stream *const st
     // This program allows inaccurate values.
     // Instead, it avoids the accumulation of errors by not using
     // the received pts as long as it continues to read frames.
-    int64_t const video_start_time =
-        av_rescale_q(a->video_start_time, AV_TIME_BASE_Q, stream->ffmpeg.cctx->pkt_timebase);
-    stream->current_sample_pos = av_rescale_q(stream->ffmpeg.frame->pts - video_start_time,
-                                              stream->ffmpeg.cctx->pkt_timebase,
-                                              av_make_q(1, stream->ffmpeg.stream->codecpar->sample_rate));
+    stream->current_sample_pos =
+        av_rescale_q(stream->ffmpeg.frame->pts -
+                         (stream->ffmpeg.stream->start_time == AV_NOPTS_VALUE ? 0 : stream->ffmpeg.stream->start_time),
+                     stream->ffmpeg.cctx->pkt_timebase,
+                     av_make_q(1, stream->ffmpeg.stream->codecpar->sample_rate));
   }
   stream->current_samples = stream->ffmpeg.frame->nb_samples;
 #if SHOWLOG_AUDIO_CURRENT_FRAME
@@ -224,11 +223,10 @@ static NODISCARD error seek(struct audio *const a, struct stream *stream, int64_
   double const start = now();
 #endif
   error err = eok();
-  int64_t time_stamp = av_rescale_q(
-      sample, av_inv_q(stream->ffmpeg.cctx->pkt_timebase), av_make_q(stream->ffmpeg.stream->codecpar->sample_rate, 1));
-  if (stream->ffmpeg.stream->start_time != AV_NOPTS_VALUE) {
-    time_stamp += stream->ffmpeg.stream->start_time;
-  }
+  int64_t time_stamp = av_rescale_q(sample,
+                                    av_inv_q(stream->ffmpeg.cctx->pkt_timebase),
+                                    av_make_q(stream->ffmpeg.stream->codecpar->sample_rate, 1)) +
+                       (stream->ffmpeg.stream->start_time == AV_NOPTS_VALUE ? 0 : stream->ffmpeg.stream->start_time);
 #if SHOWLOG_AUDIO_SEEK
   {
     char s[256];
@@ -582,7 +580,6 @@ NODISCARD error audio_create(struct audio **const app, struct audio_options cons
       .index_mode = opt->index_mode,
       .sample_rate = opt->sample_rate,
       .use_sox = opt->use_sox,
-      .video_start_time = opt->video_start_time,
       .handle = opt->handle,
   };
   mtx_init(&a->mtx, mtx_plain);
@@ -627,7 +624,6 @@ NODISCARD error audio_create(struct audio **const app, struct audio_options cons
                           &(struct audioidx_create_options){
                               .filepath = opt->filepath,
                               .handle = opt->handle,
-                              .video_start_time = opt->video_start_time,
                           });
     if (efailed(err)) {
       err = ethru(err);
@@ -641,11 +637,4 @@ cleanup:
     audio_destroy(&a);
   }
   return err;
-}
-
-int64_t audio_get_start_time(struct audio const *const a) {
-  if (!a || !a->streams[0].ffmpeg.stream || a->streams[0].ffmpeg.stream->start_time == AV_NOPTS_VALUE) {
-    return AV_NOPTS_VALUE;
-  }
-  return av_rescale_q(a->streams[0].ffmpeg.stream->start_time, a->streams[0].ffmpeg.cctx->pkt_timebase, AV_TIME_BASE_Q);
 }

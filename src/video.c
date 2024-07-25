@@ -614,10 +614,3 @@ cleanup:
   }
   return err;
 }
-
-int64_t video_get_start_time(struct video const *const v) {
-  if (!v || !v->streams[0].ffmpeg.stream || v->streams[0].ffmpeg.stream->start_time == AV_NOPTS_VALUE) {
-    return AV_NOPTS_VALUE;
-  }
-  return av_rescale_q(v->streams[0].ffmpeg.stream->start_time, v->streams[0].ffmpeg.cctx->pkt_timebase, AV_TIME_BASE_Q);
-}

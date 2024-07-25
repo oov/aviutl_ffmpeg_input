@@ -15,7 +15,6 @@ struct stream {
   struct config const *config;
   struct video *v;
   struct audio *a;
-  int64_t video_start_time;
   struct info_video vi;
   struct info_audio ai;
 };
@@ -80,7 +79,6 @@ static NODISCARD error create_audio(struct stream *sp, struct audio **a) {
                                .handle = sp->file,
                                .preferred_decoders = config_get_preferred_decoders(sp->config),
                                .num_stream = (size_t)(config_get_number_of_stream(sp->config)),
-                               .video_start_time = sp->video_start_time,
                                .index_mode = config_get_audio_index_mode(sp->config),
                                .sample_rate = config_get_audio_sample_rate(sp->config),
                                .use_sox = config_get_audio_use_sox(sp->config),
@@ -184,7 +182,6 @@ static NODISCARD error stream_create(struct stream **const spp,
     err = NULL;
   } else {
     video_get_info(v, &sp->vi);
-    sp->video_start_time = video_get_start_time(v);
   }
   err = create_audio(sp, &a);
   if (efailed(err)) {

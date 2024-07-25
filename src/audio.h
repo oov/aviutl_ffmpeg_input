@@ -36,7 +36,6 @@ struct audio_options {
   void *handle;
   char const *preferred_decoders;
   size_t num_stream;
-  int64_t video_start_time;
   enum audio_index_mode index_mode;
   enum audio_sample_rate sample_rate;
   bool use_sox;
@@ -50,5 +49,4 @@ NODISCARD error audio_read(struct audio *const fp,
                            void *const buf,
                            int *const written,
                            bool const accurate);
-int64_t audio_get_start_time(struct audio const *const a);
 void audio_get_info(struct audio const *const a, struct info_audio *const ai);
