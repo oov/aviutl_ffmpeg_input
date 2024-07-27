@@ -512,6 +512,21 @@ NODISCARD error ffmpeg_seek(struct ffmpeg_stream *const fs, int64_t const timest
   return eok();
 }
 
+NODISCARD error ffmpeg_seek_head(struct ffmpeg_stream *const fs) {
+  int r = av_seek_frame(fs->fctx, fs->stream->index, 0, AVSEEK_FLAG_BYTE);
+  if (r < 0) {
+    r = av_seek_frame(fs->fctx, fs->stream->index, 0, AVSEEK_FLAG_FRAME);
+  }
+  if (r < 0) {
+    r = av_seek_frame(fs->fctx, fs->stream->index, 0, AVSEEK_FLAG_BACKWARD);
+  }
+  if (r < 0) {
+    return errffmpeg(r);
+  }
+  avcodec_flush_buffers(fs->cctx);
+  return eok();
+}
+
 #if 0
 // It should work with mkv, but it doesn't seem to work as expected...
 NODISCARD error ffmpeg_seek_bytes(struct ffmpeg_stream *const fs, int64_t const pos) {

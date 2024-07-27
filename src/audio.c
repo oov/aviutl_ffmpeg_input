@@ -77,6 +77,10 @@ static inline int64_t sample_pos_to_pts(int64_t const sample, struct stream *con
          get_start_time(stream);
 }
 
+static inline int64_t convert_sample_rate(int64_t const sample, int const from, int const to) {
+  return av_rescale(sample, to, from);
+}
+
 static void stream_destroy(struct stream *const stream) {
   if (stream->swr_context) {
     swr_free(&stream->swr_context);
@@ -236,6 +240,7 @@ static NODISCARD error seek(struct audio *const a, struct stream *stream, int64_
 #endif
   error err = eok();
   int64_t time_stamp = sample_pos_to_pts(sample, stream);
+  int64_t const duration1s = (int64_t)(av_q2d(av_inv_q(stream->ffmpeg.cctx->pkt_timebase)));
 #if SHOWLOG_AUDIO_SEEK
   {
     char s[256];
@@ -250,13 +255,14 @@ static NODISCARD error seek(struct audio *const a, struct stream *stream, int64_
     OutputDebugStringA(s);
   }
 #endif
+  int64_t prevpts = AV_NOPTS_VALUE;
   for (;;) {
     err = ffmpeg_seek(&stream->ffmpeg, time_stamp);
     if (efailed(err)) {
       err = ethru(err);
       goto cleanup;
     }
-    int const r = ffmpeg_grab(&stream->ffmpeg);
+    int r = ffmpeg_grab(&stream->ffmpeg);
     if (r < 0) {
       err = errffmpeg(r);
       goto cleanup;
@@ -276,8 +282,26 @@ static NODISCARD error seek(struct audio *const a, struct stream *stream, int64_
         OutputDebugStringA(s);
       }
 #endif
-      // rewind 1s
-      time_stamp -= (int64_t)(av_q2d(av_inv_q(stream->ffmpeg.cctx->pkt_timebase)));
+      if (time_stamp < stream->ffmpeg.stream->start_time + duration1s && prevpts == stream->ffmpeg.packet->pts) {
+        // It seems that the pts value is not updated.
+        // If seeking to the first frame fails, seeking to 0 by byte may succeed.
+        err = ffmpeg_seek_head(&stream->ffmpeg);
+        if (efailed(err)) {
+          err = ethru(err);
+          goto cleanup;
+        }
+        r = ffmpeg_grab(&stream->ffmpeg);
+        if (r < 0) {
+          err = errffmpeg(r);
+          goto cleanup;
+        }
+        calc_current_position(a, stream);
+        break;
+      } else {
+        // rewind 1s
+        time_stamp -= duration1s;
+      }
+      prevpts = stream->ffmpeg.packet->pts;
       continue;
     }
     break;
@@ -398,15 +422,33 @@ seek:
 #if SHOWLOG_AUDIO_READ
     OutputDebugStringA(__FILE_NAME__ " seek");
 #endif
-    int64_t const readpos = av_rescale_q(
-        readpos_asr, av_make_q(1, a->active_sample_rate), av_make_q(1, stream->ffmpeg.stream->codecpar->sample_rate));
+    int64_t const readpos =
+        convert_sample_rate(readpos_asr, a->active_sample_rate, stream->ffmpeg.stream->codecpar->sample_rate);
     err = seek(a, stream, readpos);
     if (efailed(err)) {
       err = ethru(err);
       goto cleanup;
     }
+    // There is no guarantee that the destination can be moved to the destination by seek,
+    // and it may move slightly ahead of the destination.
+    // In this case, insert a margin to the destination to adjust the balance.
+    if (stream->current_sample_pos > readpos) {
+      int const silent =
+          (int)(convert_sample_rate(
+                    stream->current_sample_pos, stream->ffmpeg.stream->codecpar->sample_rate, a->active_sample_rate) -
+                readpos_asr);
+      r = swr_inject_silence(stream->swr_context, silent);
+      if (r < 0) {
+        err = errffmpeg(r);
+        goto cleanup;
+      }
+      stream->swr_buf_sample_pos_asr = readpos_asr;
+      stream->swr_buf_written = silent;
+      goto readbuf;
+    }
     goto convert;
   }
+
 #if SHOWLOG_AUDIO_READ
   OutputDebugStringA(__FILE_NAME__ " grab");
 #endif
@@ -429,9 +471,8 @@ convert:
     err = errffmpeg(r);
     goto cleanup;
   }
-  stream->swr_buf_sample_pos_asr = av_rescale_q(stream->current_sample_pos,
-                                                av_make_q(1, stream->ffmpeg.stream->codecpar->sample_rate),
-                                                av_make_q(1, a->active_sample_rate));
+  stream->swr_buf_sample_pos_asr = convert_sample_rate(
+      stream->current_sample_pos, stream->ffmpeg.stream->codecpar->sample_rate, a->active_sample_rate);
   stream->swr_buf_written = r;
   goto readbuf;
 
