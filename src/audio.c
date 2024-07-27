@@ -51,7 +51,7 @@ struct audio {
   thrd_t thread;
   enum status status;
 
-  int actual_sample_rate;
+  int active_sample_rate;
   struct audioidx *idx;
   enum audio_index_mode index_mode;
   enum audio_sample_rate sample_rate;
@@ -91,7 +91,7 @@ static NODISCARD error stream_create(struct stream *const stream,
                                      struct ffmpeg_open_options const *const opt,
                                      enum audio_sample_rate const sample_rate,
                                      bool const use_sox,
-                                     int *const actual_sample_rate) {
+                                     int *const active_sample_rate) {
   error err = ffmpeg_open(&stream->ffmpeg, opt);
   if (efailed(err)) {
     err = ethru(err);
@@ -152,8 +152,8 @@ static NODISCARD error stream_create(struct stream *const stream,
     err = errffmpeg(r);
     goto cleanup;
   }
-  if (actual_sample_rate) {
-    *actual_sample_rate = out_sample_rate;
+  if (active_sample_rate) {
+    *active_sample_rate = out_sample_rate;
   }
 cleanup:
   if (efailed(err)) {
@@ -163,10 +163,10 @@ cleanup:
 }
 
 void audio_get_info(struct audio const *const a, struct info_audio *const ai) {
-  ai->sample_rate = a->actual_sample_rate;
+  ai->sample_rate = a->active_sample_rate;
   ai->channels = g_channels;
   ai->bit_depth = sizeof(sample_t) * 8;
-  ai->samples = av_rescale_q(a->streams[0].ffmpeg.fctx->duration, AV_TIME_BASE_Q, av_make_q(1, a->actual_sample_rate));
+  ai->samples = av_rescale_q(a->streams[0].ffmpeg.fctx->duration, AV_TIME_BASE_Q, av_make_q(1, a->active_sample_rate));
 #if SHOWLOG_AUDIO_GET_INFO
   char s[256];
   ov_snprintf(s,
@@ -391,7 +391,7 @@ readbuf:
 
 seek:
   if (readpos_asr < stream->swr_buf_sample_pos_asr ||
-      readpos_asr >= stream->swr_buf_sample_pos_asr + a->actual_sample_rate) {
+      readpos_asr >= stream->swr_buf_sample_pos_asr + a->active_sample_rate) {
     if (readpos_asr < a->first_sample_pos) {
       goto inject_silence;
     }
@@ -399,7 +399,7 @@ seek:
     OutputDebugStringA(__FILE_NAME__ " seek");
 #endif
     int64_t const readpos = av_rescale_q(
-        readpos_asr, av_make_q(1, a->actual_sample_rate), av_make_q(1, stream->ffmpeg.stream->codecpar->sample_rate));
+        readpos_asr, av_make_q(1, a->active_sample_rate), av_make_q(1, stream->ffmpeg.stream->codecpar->sample_rate));
     err = seek(a, stream, readpos);
     if (efailed(err)) {
       err = ethru(err);
@@ -431,7 +431,7 @@ convert:
   }
   stream->swr_buf_sample_pos_asr = av_rescale_q(stream->current_sample_pos,
                                                 av_make_q(1, stream->ffmpeg.stream->codecpar->sample_rate),
-                                                av_make_q(1, a->actual_sample_rate));
+                                                av_make_q(1, a->active_sample_rate));
   stream->swr_buf_written = r;
   goto readbuf;
 
@@ -619,7 +619,7 @@ NODISCARD error audio_create(struct audio **const app, struct audio_options cons
                       },
                       opt->sample_rate,
                       opt->use_sox,
-                      &a->actual_sample_rate);
+                      &a->active_sample_rate);
   if (efailed(err)) {
     err = ethru(err);
     goto cleanup;
