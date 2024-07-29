@@ -26,11 +26,11 @@ struct stream {
   struct ffmpeg_stream ffmpeg;
   SwrContext *swr_context;
   uint8_t *swr_buf;
-  int64_t current_sample_pos;
+  int64_t current_sample_pos_osr;
   int64_t swr_buf_sample_pos_asr;
   int swr_buf_len;
-  int swr_buf_written;
-  int current_samples;
+  int swr_buf_written_asr;
+  int current_samples_osr;
   struct timespec ts;
 };
 
@@ -127,7 +127,7 @@ static NODISCARD error stream_create(struct stream *const stream,
     break;
   }
 
-  stream->current_sample_pos = AV_NOPTS_VALUE;
+  stream->current_sample_pos_osr = AV_NOPTS_VALUE;
   stream->swr_buf_sample_pos_asr = AV_NOPTS_VALUE;
   stream->swr_buf_len = out_sample_rate * g_channels;
   int r = av_samples_alloc(&stream->swr_buf, NULL, 2, stream->swr_buf_len, AV_SAMPLE_FMT_S16, 0);
@@ -189,24 +189,24 @@ static void calc_current_position(struct audio *const a, struct stream *const st
   int64_t pos = a->idx ? audioidx_get(a->idx, stream->ffmpeg.packet->pts, a->wait_index) : -1;
   if (pos != -1) {
     // found corrent sample position
-    stream->current_sample_pos = pos;
+    stream->current_sample_pos_osr = pos;
   } else {
     // It seems pts value may be inaccurate.
     // There would be no way to correct the values except to recalculate from the first frame.
     // This program allows inaccurate values.
     // Instead, it avoids the accumulation of errors by not using
     // the received pts as long as it continues to read frames.
-    stream->current_sample_pos = pts_to_sample_pos(stream->ffmpeg.packet->pts, stream);
+    stream->current_sample_pos_osr = pts_to_sample_pos(stream->ffmpeg.packet->pts, stream);
   }
-  stream->current_samples = stream->ffmpeg.frame->nb_samples;
+  stream->current_samples_osr = stream->ffmpeg.frame->nb_samples;
 #if SHOWLOG_AUDIO_CURRENT_FRAME
   char s[256];
   ov_snprintf(s,
               256,
               NULL,
               "a samplepos: %lld samples: %ld key_frame: %d, pts: %lld start_time: %lld time_base:%f sample_rate:%d",
-              stream->current_sample_pos,
-              stream->current_samples,
+              stream->current_sample_pos_osr,
+              stream->current_samples_osr,
               (stream->ffmpeg.frame->flags & AV_FRAME_FLAG_KEY) != 0,
               stream->ffmpeg.frame->pts,
               stream->ffmpeg.stream->start_time,
@@ -217,13 +217,13 @@ static void calc_current_position(struct audio *const a, struct stream *const st
 }
 
 static NODISCARD error grab(struct stream *const stream) {
-  int const old_samples = stream->current_samples;
+  int const old_samples_osr = stream->current_samples_osr;
   int const r = ffmpeg_grab(&stream->ffmpeg);
   if (r < 0) {
     return errffmpeg(r);
   }
-  stream->current_sample_pos += old_samples;
-  stream->current_samples = stream->ffmpeg.frame->nb_samples;
+  stream->current_sample_pos_osr += old_samples_osr;
+  stream->current_samples_osr = stream->ffmpeg.frame->nb_samples;
   return eok();
 }
 
@@ -268,7 +268,7 @@ static NODISCARD error seek(struct audio *const a, struct stream *stream, int64_
       goto cleanup;
     }
     calc_current_position(a, stream);
-    if (stream->current_sample_pos > sample) {
+    if (stream->current_sample_pos_osr > sample) {
 #if SHOWLOG_AUDIO_SEEK_ADJUST
       {
         char s[256];
@@ -277,7 +277,7 @@ static NODISCARD error seek(struct audio *const a, struct stream *stream, int64_
                     NULL,
                     "a adjust target: %lld current: %lld rewind: %f",
                     sample,
-                    stream->current_sample_pos,
+                    stream->current_sample_pos_osr,
                     av_q2d(av_inv_q(stream->ffmpeg.cctx->pkt_timebase)));
         OutputDebugStringA(s);
       }
@@ -307,7 +307,7 @@ static NODISCARD error seek(struct audio *const a, struct stream *stream, int64_
     break;
   }
 #if 0
-  if (stream->current_sample_pos < sample) {
+  if (stream->current_sample_pos_osr < sample) {
     // https://ffmpeg.org/doxygen/6.0/group__lavc__packet.html#gga9a80bfcacc586b483a973272800edb97a2093332d8086d25a04942ede61007f6a
     // below code is depend on structure packing, so it's not portable.
     // struct data_skip_samples {
@@ -321,7 +321,7 @@ static NODISCARD error seek(struct audio *const a, struct stream *stream, int64_
       data = av_packet_new_side_data(stream->ffmpeg.packet, AV_PKT_DATA_SKIP_SAMPLES, 10);
     }
     if (data) {
-      *(uint32_t *)((void *)data) = (uint32_t)(sample - stream->current_sample_pos);
+      *(uint32_t *)((void *)data) = (uint32_t)(sample - stream->current_sample_pos_osr);
       memset(data + 4, 0, 6);
     }
     int r = avcodec_send_packet(stream->ffmpeg.cctx, stream->ffmpeg.packet);
@@ -332,11 +332,15 @@ static NODISCARD error seek(struct audio *const a, struct stream *stream, int64_
     }
   }
 #endif
-  while (stream->current_sample_pos + stream->ffmpeg.frame->nb_samples <= sample) {
+  while (stream->current_sample_pos_osr + stream->ffmpeg.frame->nb_samples <= sample) {
 #if SHOWLOG_AUDIO_SEEK
     char s[256];
-    ov_snprintf(
-        s, 256, NULL, "csp: %lld / smp: %lld", stream->current_sample_pos + stream->ffmpeg.frame->nb_samples, sample);
+    ov_snprintf(s,
+                256,
+                NULL,
+                "csp: %lld / smp: %lld",
+                stream->current_sample_pos_osr + stream->ffmpeg.frame->nb_samples,
+                sample);
     OutputDebugStringA(s);
 #endif
     err = grab(stream);
@@ -386,12 +390,12 @@ readbuf:
   if (readpos_asr < stream->swr_buf_sample_pos_asr) {
     goto seek;
   }
-  if (readpos_asr < (stream->swr_buf_sample_pos_asr + stream->swr_buf_written)) {
+  if (readpos_asr < (stream->swr_buf_sample_pos_asr + stream->swr_buf_written_asr)) {
 #if SHOWLOG_AUDIO_READ
     OutputDebugStringA(__FILE_NAME__ " readbuf");
 #endif
     int const bufpos = (int)(readpos_asr - stream->swr_buf_sample_pos_asr);
-    int const samples = imin(stream->swr_buf_written - bufpos, (int)(length - read));
+    int const samples = imin(stream->swr_buf_written_asr - bufpos, (int)(length - read));
     memcpy(
         dest + (read * g_sample_size), stream->swr_buf + (bufpos * g_sample_size), (size_t)(samples * g_sample_size));
     read += samples;
@@ -402,13 +406,13 @@ readbuf:
 #if SHOWLOG_AUDIO_READ
   OutputDebugStringA(__FILE_NAME__ " flushswr");
 #endif
-  stream->swr_buf_sample_pos_asr += stream->swr_buf_written;
+  stream->swr_buf_sample_pos_asr += stream->swr_buf_written_asr;
   r = swr_convert(stream->swr_context, &stream->swr_buf, stream->swr_buf_len, NULL, 0);
   if (r < 0) {
     err = errffmpeg(r);
     goto cleanup;
   }
-  stream->swr_buf_written = r;
+  stream->swr_buf_written_asr = r;
   if (r) {
     goto readbuf;
   }
@@ -432,18 +436,18 @@ seek:
     // There is no guarantee that the destination can be moved to the destination by seek,
     // and it may move slightly ahead of the destination.
     // In this case, insert a margin to the destination to adjust the balance.
-    if (stream->current_sample_pos > readpos) {
-      int const silent =
-          (int)(convert_sample_rate(
-                    stream->current_sample_pos, stream->ffmpeg.stream->codecpar->sample_rate, a->active_sample_rate) -
-                readpos_asr);
+    if (stream->current_sample_pos_osr > readpos) {
+      int const silent = (int)(convert_sample_rate(stream->current_sample_pos_osr,
+                                                   stream->ffmpeg.stream->codecpar->sample_rate,
+                                                   a->active_sample_rate) -
+                               readpos_asr);
       r = swr_inject_silence(stream->swr_context, silent);
       if (r < 0) {
         err = errffmpeg(r);
         goto cleanup;
       }
       stream->swr_buf_sample_pos_asr = readpos_asr;
-      stream->swr_buf_written = silent;
+      stream->swr_buf_written_asr = silent;
       goto readbuf;
     }
     goto convert;
@@ -472,8 +476,8 @@ convert:
     goto cleanup;
   }
   stream->swr_buf_sample_pos_asr = convert_sample_rate(
-      stream->current_sample_pos, stream->ffmpeg.stream->codecpar->sample_rate, a->active_sample_rate);
-  stream->swr_buf_written = r;
+      stream->current_sample_pos_osr, stream->ffmpeg.stream->codecpar->sample_rate, a->active_sample_rate);
+  stream->swr_buf_written_asr = r;
   goto readbuf;
 
 inject_silence:
@@ -491,7 +495,7 @@ inject_silence:
     goto cleanup;
   }
   stream->swr_buf_sample_pos_asr = readpos_asr;
-  stream->swr_buf_written = r;
+  stream->swr_buf_written_asr = r;
   goto readbuf;
 
 cleanup:
@@ -558,7 +562,7 @@ static struct stream *find_stream(struct audio *const a, int64_t const offset) {
   for (size_t i = 0; i < num_stream; ++i) {
     struct stream *stream = a->streams + i;
     if (stream->swr_buf_sample_pos_asr != AV_NOPTS_VALUE && stream->swr_buf_sample_pos_asr <= offset &&
-        offset < stream->swr_buf_sample_pos_asr + stream->swr_buf_written) {
+        offset < stream->swr_buf_sample_pos_asr + stream->swr_buf_written_asr) {
       exact = stream;
       break;
     }
@@ -575,7 +579,7 @@ static struct stream *find_stream(struct audio *const a, int64_t const offset) {
   {
     char s[256];
     ov_snprintf(
-        s, 256, NULL, "a find stream #%d ofs:%lld cur:%lld", exact - a->streams, offset, exact->current_sample_pos);
+        s, 256, NULL, "a find stream #%d ofs:%lld cur:%lld", exact - a->streams, offset, exact->current_sample_pos_osr);
     OutputDebugStringA(s);
   }
 #endif
