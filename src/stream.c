@@ -7,6 +7,7 @@
 #include "audio.h"
 #include "config.h"
 #include "progress.h"
+#include "resampler.h"
 #include "video.h"
 
 struct stream {
@@ -275,12 +276,13 @@ cleanup:
 }
 
 static NODISCARD error stream_read_audio(struct stream *const sp,
+                                         struct resampler *const rp,
                                          int64_t const start,
                                          size_t const length,
                                          void *const buf,
                                          int *const written,
                                          bool const accurate) {
-  if (!sp || !buf || !length) {
+  if (!sp || !rp || !buf || !length) {
     return errg(err_invalid_arugment);
   }
   error err = eok();
@@ -292,7 +294,7 @@ static NODISCARD error stream_read_audio(struct stream *const sp,
     }
   }
   int wr = 0;
-  err = audio_read(sp->a, start, (int)length, buf, &wr, accurate);
+  err = audio_read(sp->a, rp, start, (int)length, buf, &wr, accurate);
   if (efailed(err)) {
     err = ethru(err);
     goto cleanup;
@@ -322,6 +324,8 @@ struct poolitem {
 struct streamitem {
   intptr_t key;
   struct stream *stream;
+  // Resamplers cannot be shared among multiple streams because they are affected by the previous frame of audio.
+  struct resampler *resampler;
 };
 
 struct streammap {
@@ -384,6 +388,9 @@ static bool cleaner(void const *const item, void *const udata) {
   (void)udata;
   struct streamitem *si = ov_deconster_(item);
   stream_destroy(&si->stream);
+  if (si->resampler) {
+    resampler_destroy(&si->resampler);
+  }
   return true;
 }
 
@@ -537,6 +544,49 @@ cleanup:
   return err;
 }
 
+static struct stream *get_stream_and_resampler(struct streammap *const smp, intptr_t const idx, struct resampler **rp) {
+  struct streamitem *si = NULL;
+  error err = hmget(&smp->map, &((struct streamitem){.key = idx}), &si);
+  if (efailed(err)) {
+    efree(&err);
+    return NULL;
+  }
+  if (!si) {
+    return NULL;
+  }
+  if (rp) {
+    if (!si->resampler) {
+      // To save resources, the audio stream is closed immediately after the first read.
+      // The audio stream is required to create a resampler, so it is recreated at this time.
+      if (!si->stream->a) {
+        err = create_audio(si->stream, &si->stream->a);
+        if (efailed(err)) {
+          err = ethru(err);
+          return NULL;
+        }
+      }
+      err = resampler_create(&si->resampler,
+                             &(struct resampler_options){
+                                 .out_rate = si->stream->ai.sample_rate,
+                                 .use_sox = config_get_audio_use_sox(si->stream->config),
+                                 .codecpar = audio_get_codec_parameter(si->stream->a),
+                             });
+      if (efailed(err)) {
+        ereport(err);
+        return NULL;
+      }
+      err = hmset(&smp->map, si, NULL);
+      if (efailed(err)) {
+        resampler_destroy(&si->resampler);
+        ereport(err);
+        return NULL;
+      }
+    }
+    *rp = si->resampler;
+  }
+  return si->stream;
+}
+
 static struct stream *get_stream(struct streammap *const smp, intptr_t const idx) {
   struct streamitem *si = NULL;
   error err = hmget(&smp->map, &((struct streamitem){.key = idx}), &si);
@@ -599,6 +649,9 @@ NODISCARD error streammap_free_stream(struct streammap *const smp, intptr_t cons
   if (!si) {
     goto cleanup;
   }
+  if (si->resampler) {
+    resampler_destroy(&si->resampler);
+  }
   if (!smp->pool_length) {
     stream_destroy(&si->stream);
     goto cleanup;
@@ -645,9 +698,10 @@ NODISCARD error streammap_read_audio(struct streammap *const smp,
                                      void *const buf,
                                      int *const written,
                                      bool const accurate) {
-  struct stream *const sp = get_stream(smp, idx);
+  struct resampler *rp = NULL;
+  struct stream *const sp = get_stream_and_resampler(smp, idx, &rp);
   if (!sp) {
     return errg(err_invalid_arugment);
   }
-  return stream_read_audio(sp, start, length, buf, written, accurate);
+  return stream_read_audio(sp, rp, start, length, buf, written, accurate);
 }

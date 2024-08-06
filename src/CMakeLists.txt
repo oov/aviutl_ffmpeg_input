@@ -112,6 +112,7 @@ add_library(ffmpeg_input SHARED
   now.c
   process.c
   progress.c
+  resampler.c
   stream.c
   video.c
 )

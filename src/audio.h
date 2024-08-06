@@ -4,6 +4,7 @@
 #include "ovbase.h"
 
 struct audio;
+struct resampler;
 
 enum audio_index_mode {
   aim_noindex = 0,
@@ -43,10 +44,12 @@ struct audio_options {
 
 NODISCARD error audio_create(struct audio **const app, struct audio_options const *const opt);
 void audio_destroy(struct audio **const app);
-NODISCARD error audio_read(struct audio *const fp,
+NODISCARD error audio_read(struct audio *const a,
+                           struct resampler *const r,
                            int64_t const offset,
                            int const length,
                            void *const buf,
                            int *const written,
                            bool const accurate);
 void audio_get_info(struct audio const *const a, struct info_audio *const ai);
+void *audio_get_codec_parameter(struct audio const *const a);
