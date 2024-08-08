@@ -127,7 +127,10 @@ static NODISCARD error grab_next(struct stream *const stream) {
   return eok();
 }
 
-static NODISCARD error seek(struct audio *const a, struct stream *stream, int64_t const sample) {
+static NODISCARD error seek(struct audio *const a,
+                            struct stream *stream,
+                            int64_t const sample,
+                            int64_t *sample_pos_osr) {
   (void)a;
 #if SHOWLOG_AUDIO_REPORT_INDEX_ENTRIES
   {
@@ -231,7 +234,8 @@ static NODISCARD error seek(struct audio *const a, struct stream *stream, int64_
     }
   }
 #endif
-  while (pts_to_sample_pos_osr(stream->ffmpeg.packet->pts, stream) + stream->ffmpeg.frame->nb_samples <= sample) {
+  int64_t pos_osr = pts_to_sample_pos_osr(stream->ffmpeg.packet->pts, stream);
+  while (pos_osr + stream->ffmpeg.frame->nb_samples <= sample) {
 #if SHOWLOG_AUDIO_SEEK
     {
       char s[256];
@@ -244,6 +248,7 @@ static NODISCARD error seek(struct audio *const a, struct stream *stream, int64_
       OutputDebugStringA(s);
     }
 #endif
+    pos_osr += stream->ffmpeg.frame->nb_samples;
     // It seems we should not use ffmpeg_grab_discard here.
     // In some cases, the processing speed may drop significantly.
     int const r = ffmpeg_grab(&stream->ffmpeg);
@@ -252,6 +257,7 @@ static NODISCARD error seek(struct audio *const a, struct stream *stream, int64_
       goto cleanup;
     }
   }
+  *sample_pos_osr = pos_osr;
 cleanup:
 #if SHOWLOG_AUDIO_SEEK_SPEED
 {
@@ -299,24 +305,27 @@ start:
   }
 
   // Is there any part that can be used within the resampled buffer?
-  int64_t const readpos_isr = (offset_asr + read) * resampler->gcd.factor_b;
-  if (readpos_isr >= resampler->pos_isr &&
-      readpos_isr < (resampler->pos_isr + resampler->written * resampler->gcd.factor_b)) {
+  int64_t const readpos_asr = offset_asr + read;
+  int64_t const resampled_pos_asr = resampler->pos_isr / resampler->gcd.factor_b;
+  if (readpos_asr >= resampled_pos_asr && readpos_asr < resampled_pos_asr + resampler->written) {
     goto readbuf;
   }
+
   // Is there any part that can be used within the current frame?
-  int64_t const pos_isr = pts_to_sample_pos_osr(stream->ffmpeg.packet->pts, stream) * resampler->gcd.factor_b *
-                          resampler->gcd.factor_b / resampler->gcd.factor_a;
-  int const samples =
-      stream->ffmpeg.frame->nb_samples * resampler->gcd.factor_b * resampler->gcd.factor_b / resampler->gcd.factor_a;
-  if (readpos_isr >= pos_isr && readpos_isr < (pos_isr + samples)) {
+  int64_t const frame_pos_isr = pts_to_sample_pos_osr(stream->ffmpeg.packet->pts, stream) * resampler->gcd.factor_b;
+  int64_t const frame_pos_asr = frame_pos_isr / resampler->gcd.factor_a;
+  int64_t const frame_end_pos_asr =
+      (frame_pos_isr + stream->ffmpeg.frame->nb_samples * resampler->gcd.factor_b) / resampler->gcd.factor_a;
+  if (readpos_asr >= frame_pos_asr && readpos_asr < frame_end_pos_asr) {
     goto convert;
   }
 
   // There seems to be no data available in the current frame.
 
   // Assuming that the next frame has the same number of samples, is there data available in the next frame?
-  if (readpos_isr >= pos_isr + samples && readpos_isr < (pos_isr + samples * 2)) {
+  int64_t const next_frame_end_pos_asr =
+      (frame_pos_isr + stream->ffmpeg.frame->nb_samples * 2 * resampler->gcd.factor_b) / resampler->gcd.factor_a;
+  if (readpos_asr >= frame_end_pos_asr && readpos_asr < next_frame_end_pos_asr) {
     goto grab_next;
   }
 
@@ -328,7 +337,7 @@ readbuf:
   OutputDebugStringA(__FILE_NAME__ " readbuf");
 #endif
   {
-    int const buffer_offset_asr = (int)(readpos_isr - resampler->pos_isr) / resampler->gcd.factor_b;
+    int const buffer_offset_asr = (int)(readpos_asr - resampled_pos_asr);
     int const samples_asr = imin(length - read, resampler->written - buffer_offset_asr);
     memcpy(dest + read * resampler_out_sample_size,
            resampler->buf + buffer_offset_asr * resampler_out_sample_size,
@@ -364,11 +373,26 @@ seek:
 #if SHOWLOG_AUDIO_READ
   OutputDebugStringA(__FILE_NAME__ " seek");
 #endif
-  err = seek(a, stream, (offset_asr + read) * resampler->gcd.factor_a / resampler->gcd.factor_b);
-  if (efailed(err)) {
-    err = ethru(err);
-    goto cleanup;
+  {
+    int64_t pos_osr;
+    err = seek(a, stream, (offset_asr + read) * resampler->gcd.factor_a / resampler->gcd.factor_b, &pos_osr);
+    if (efailed(err)) {
+      err = ethru(err);
+      goto cleanup;
+    }
+    r = swr_convert(resampler->ctx,
+                    (void *)&resampler->buf,
+                    resampler->samples,
+                    (void *)stream->ffmpeg.frame->data,
+                    stream->ffmpeg.frame->nb_samples);
+    if (r < 0) {
+      err = errffmpeg(r);
+      goto cleanup;
+    }
+    resampler->pos_isr = pos_osr * resampler->gcd.factor_b * resampler->gcd.factor_b / resampler->gcd.factor_a;
+    resampler->written = r;
   }
+  goto start;
 
 convert:
   r = swr_convert(resampler->ctx,
