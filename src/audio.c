@@ -46,7 +46,6 @@ struct audio {
   int out_sample_rate;
   struct audioidx *idx;
   enum audio_index_mode index_mode;
-  enum audio_sample_rate sample_rate;
   bool wait_index;
 };
 
@@ -581,7 +580,6 @@ NODISCARD error audio_create(struct audio **const app, struct audio_options cons
   }
   *a = (struct audio){
       .index_mode = opt->index_mode,
-      .sample_rate = opt->sample_rate,
       .handle = opt->handle,
   };
   mtx_init(&a->mtx, mtx_plain);
