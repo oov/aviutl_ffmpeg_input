@@ -118,7 +118,7 @@ static NODISCARD error grab_next(struct stream *const stream) {
 #if SHOWLOG_AUDIO_READ
   {
     int64_t const p1 = stream->resampled_current_pos_isr + old_samples_isr;
-    int64_t const p2 = pts_to_sample_pos_isr(stream->ffmpeg.packet->pts, stream);
+    int64_t const p2 = pts_to_sample_pos_isr(stream->ffmpeg.frame->pts, stream);
     char s[256];
     ov_snprintf(s, 256, NULL, "a grab_next pos add %lld stored: %lld equal: %d", p1, p2, p1 == p2 ? 1 : 0);
     OutputDebugStringA(s);
@@ -171,7 +171,7 @@ static NODISCARD error seek(struct audio *const a,
       err = errffmpeg(r);
       goto cleanup;
     }
-    int64_t const pos_osr = pts_to_sample_pos_osr(stream->ffmpeg.packet->pts, stream);
+    int64_t const pos_osr = pts_to_sample_pos_osr(stream->ffmpeg.frame->pts, stream);
     if (pos_osr > sample) {
 #if SHOWLOG_AUDIO_SEEK_ADJUST
       {
@@ -186,7 +186,7 @@ static NODISCARD error seek(struct audio *const a,
         OutputDebugStringA(s);
       }
 #endif
-      if (time_stamp < stream->ffmpeg.stream->start_time + duration1s && prevpts == stream->ffmpeg.packet->pts) {
+      if (time_stamp < stream->ffmpeg.stream->start_time + duration1s && prevpts == stream->ffmpeg.frame->pts) {
         // It seems that the pts value is not updated.
         // If seeking to the first frame fails, seeking to 0 by byte may succeed.
         err = ffmpeg_seek_head(&stream->ffmpeg);
@@ -203,7 +203,7 @@ static NODISCARD error seek(struct audio *const a,
       } else {
         time_stamp -= duration1s;
       }
-      prevpts = stream->ffmpeg.packet->pts;
+      prevpts = stream->ffmpeg.frame->pts;
       continue;
     }
     break;
@@ -234,7 +234,7 @@ static NODISCARD error seek(struct audio *const a,
     }
   }
 #endif
-  int64_t pos_osr = pts_to_sample_pos_osr(stream->ffmpeg.packet->pts, stream);
+  int64_t pos_osr = pts_to_sample_pos_osr(stream->ffmpeg.frame->pts, stream);
   while (pos_osr + stream->ffmpeg.frame->nb_samples <= sample) {
 #if SHOWLOG_AUDIO_SEEK
     {
@@ -258,7 +258,7 @@ static NODISCARD error seek(struct audio *const a,
     }
 #if SHOWLOG_AUDIO_GAP
     {
-      int64_t const pts_pos = pts_to_sample_pos_osr(stream->ffmpeg.packet->pts, stream);
+      int64_t const pts_pos = pts_to_sample_pos_osr(stream->ffmpeg.frame->pts, stream);
       if (pos_osr != pts_pos) {
         char s[256];
         ov_snprintf(s, 256, NULL, "pos gap: %lld %lld", pos_osr, pts_pos);
@@ -322,7 +322,7 @@ start:
   }
 
   // Is there any part that can be used within the current frame?
-  int64_t const frame_pos_isr = pts_to_sample_pos_osr(stream->ffmpeg.packet->pts, stream) * resampler->gcd.factor_b;
+  int64_t const frame_pos_isr = pts_to_sample_pos_osr(stream->ffmpeg.frame->pts, stream) * resampler->gcd.factor_b;
   int64_t const frame_pos_asr = frame_pos_isr / resampler->gcd.factor_a;
   int64_t const frame_end_pos_asr =
       (frame_pos_isr + stream->ffmpeg.frame->nb_samples * resampler->gcd.factor_b) / resampler->gcd.factor_a;
@@ -380,7 +380,7 @@ grab_next:
 #if SHOWLOG_AUDIO_GAP
   {
     int64_t const pts_pos =
-        pts_to_sample_pos_osr(stream->ffmpeg.packet->pts, stream) * resampler->gcd.factor_b / resampler->gcd.factor_a;
+        pts_to_sample_pos_osr(stream->ffmpeg.frame->pts, stream) * resampler->gcd.factor_b / resampler->gcd.factor_a;
     if (resampler->pos_isr / resampler->gcd.factor_b != pts_pos) {
       char s[256];
       ov_snprintf(s, 256, NULL, "pos gap: %lld %lld", resampler->pos_isr / resampler->gcd.factor_b, pts_pos);
@@ -425,7 +425,7 @@ convert:
     err = errffmpeg(r);
     goto cleanup;
   }
-  resampler->pos_isr = pts_to_sample_pos_osr(stream->ffmpeg.packet->pts, stream) * resampler->gcd.factor_b *
+  resampler->pos_isr = pts_to_sample_pos_osr(stream->ffmpeg.frame->pts, stream) * resampler->gcd.factor_b *
                        resampler->gcd.factor_b / resampler->gcd.factor_a;
   resampler->written = r;
   goto start;
@@ -499,8 +499,7 @@ static struct stream *find_stream(struct audio *const a, struct gcd const gcd, i
   int64_t const offset_isr = offset * gcd.factor_b;
   for (size_t i = 0; i < num_stream; ++i) {
     struct stream *stream = a->streams + i;
-    int64_t pos =
-        pts_to_sample_pos_osr(stream->ffmpeg.packet->pts, stream) * gcd.factor_b * gcd.factor_b / gcd.factor_a;
+    int64_t pos = pts_to_sample_pos_osr(stream->ffmpeg.frame->pts, stream) * gcd.factor_b * gcd.factor_b / gcd.factor_a;
     int const samples = stream->ffmpeg.frame->nb_samples * gcd.factor_b * gcd.factor_b / gcd.factor_a;
     if (pos <= offset_isr && offset_isr < pos + samples) {
       exact = stream;
