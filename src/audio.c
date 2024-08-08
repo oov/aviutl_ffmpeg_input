@@ -16,6 +16,7 @@
 #define SHOWLOG_AUDIO_SEEK_SPEED 0
 #define SHOWLOG_AUDIO_SEEK_FIND_STREAM 0
 #define SHOWLOG_AUDIO_READ 0
+#define SHOWLOG_AUDIO_GAP 0
 
 // osr = original sample rate
 // asr = active sample rate
@@ -256,6 +257,16 @@ static NODISCARD error seek(struct audio *const a,
       err = errffmpeg(r);
       goto cleanup;
     }
+#if SHOWLOG_AUDIO_GAP
+    {
+      int64_t const pts_pos = pts_to_sample_pos_osr(stream->ffmpeg.packet->pts, stream);
+      if (pos_osr != pts_pos) {
+        char s[256];
+        ov_snprintf(s, 256, NULL, "pos gap: %lld %lld", pos_osr, pts_pos);
+        OutputDebugStringA(s);
+      }
+    }
+#endif
   }
   *sample_pos_osr = pos_osr;
 cleanup:
@@ -367,6 +378,17 @@ grab_next:
   // If you recalculate, the result will be shifted due to the effect of the sample rate conversion,
   resampler->pos_isr += resampler->written * resampler->gcd.factor_b;
   resampler->written = r;
+#if SHOWLOG_AUDIO_GAP
+  {
+    int64_t const pts_pos =
+        pts_to_sample_pos_osr(stream->ffmpeg.packet->pts, stream) * resampler->gcd.factor_b / resampler->gcd.factor_a;
+    if (resampler->pos_isr / resampler->gcd.factor_b != pts_pos) {
+      char s[256];
+      ov_snprintf(s, 256, NULL, "pos gap: %lld %lld", resampler->pos_isr / resampler->gcd.factor_b, pts_pos);
+      OutputDebugStringA(s);
+    }
+  }
+#endif
   goto start;
 
 seek:
