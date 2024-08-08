@@ -75,3 +75,4 @@ NODISCARD error ffmpeg_seek_bytes(struct ffmpeg_stream *const fs, int64_t const 
 
 int ffmpeg_read_packet(struct ffmpeg_stream *const fs);
 int ffmpeg_grab(struct ffmpeg_stream *const fs);
+int ffmpeg_grab_discard(struct ffmpeg_stream *const fs);

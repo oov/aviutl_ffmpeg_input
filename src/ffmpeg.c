@@ -568,7 +568,7 @@ static int inline send_packet(struct ffmpeg_stream *const fs) { return avcodec_s
 
 static int inline send_null_packet(struct ffmpeg_stream *const fs) { return avcodec_send_packet(fs->cctx, NULL); }
 
-int ffmpeg_grab(struct ffmpeg_stream *const fs) {
+static int grab(struct ffmpeg_stream *const fs, bool const discard) {
   int r = 0;
   for (;;) {
     r = receive_frame(fs);
@@ -596,6 +596,9 @@ int ffmpeg_grab(struct ffmpeg_stream *const fs) {
         goto cleanup;
       }
     }
+    if (discard) {
+      fs->packet->flags |= AV_PKT_FLAG_DISCARD;
+    }
     r = send_packet(fs);
     switch (r) {
     case 0:
@@ -610,3 +613,7 @@ int ffmpeg_grab(struct ffmpeg_stream *const fs) {
 cleanup:
   return r;
 }
+
+int ffmpeg_grab(struct ffmpeg_stream *const fs) { return grab(fs, false); }
+
+int ffmpeg_grab_discard(struct ffmpeg_stream *const fs) { return grab(fs, true); }

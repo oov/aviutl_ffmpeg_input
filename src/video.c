@@ -46,13 +46,27 @@ struct video {
   enum status status;
 
   struct SwsContext *sws_context;
+  int64_t valid_first_frame;
   bool yuy2;
 };
+
+static inline int64_t get_start_time(struct stream const *const stream) {
+  return stream->ffmpeg.stream->start_time == AV_NOPTS_VALUE ? 0 : stream->ffmpeg.stream->start_time;
+}
+
+static inline int64_t pts_to_frame(int64_t const pts, struct stream const *const stream) {
+  return av_rescale_q(
+      pts - get_start_time(stream), stream->ffmpeg.cctx->pkt_timebase, av_inv_q(stream->ffmpeg.stream->avg_frame_rate));
+}
+
+static inline int64_t frame_to_pts(int64_t const frame, struct stream const *const stream) {
+  return av_rescale_q(frame, av_inv_q(stream->ffmpeg.cctx->pkt_timebase), stream->ffmpeg.stream->avg_frame_rate) +
+         get_start_time(stream);
+}
 
 static size_t scale(struct video *const v, struct stream *stream, void *buf) {
   int const width = stream->ffmpeg.cctx->width;
   int const height = stream->ffmpeg.cctx->height;
-  int const output_linesize = width * 3;
   if (v->yuy2) {
     sws_scale(v->sws_context,
               (const uint8_t *const *)stream->ffmpeg.frame->data,
@@ -63,6 +77,7 @@ static size_t scale(struct video *const v, struct stream *stream, void *buf) {
               (int[4]){width * 2, 0, 0, 0});
     return (size_t)(width * height * 2);
   }
+  int const output_linesize = width * 3;
   sws_scale(v->sws_context,
             (const uint8_t *const *)stream->ffmpeg.frame->data,
             stream->ffmpeg.frame->linesize,
@@ -71,6 +86,20 @@ static size_t scale(struct video *const v, struct stream *stream, void *buf) {
             (uint8_t *[4]){(uint8_t *)buf + output_linesize * (height - 1), NULL, NULL, NULL},
             (int[4]){-(output_linesize), 0, 0, 0});
   return (size_t)(width * height * 3);
+}
+
+static size_t fill_blank(struct video *const v, void *buf) {
+  size_t const bytes =
+      (size_t)(v->streams[0].ffmpeg.cctx->width * v->streams[0].ffmpeg.cctx->height * (v->yuy2 ? 2 : 3));
+  if (v->yuy2) {
+    for (size_t i = 0; i < bytes; i += 2) {
+      ((uint8_t *)buf)[i] = 0;
+      ((uint8_t *)buf)[i + 1] = 128;
+    }
+  } else {
+    memset(buf, 0, bytes);
+  }
+  return bytes;
 }
 
 void video_get_info(struct video const *const v, struct info_video *const vi) {
@@ -96,9 +125,7 @@ void video_get_info(struct video const *const v, struct info_video *const vi) {
 }
 
 static inline void calc_current_frame(struct stream *const stream) {
-  stream->current_frame = av_rescale_q(stream->ffmpeg.frame->pts - stream->ffmpeg.stream->start_time,
-                                       stream->ffmpeg.stream->avg_frame_rate,
-                                       av_inv_q(stream->ffmpeg.cctx->pkt_timebase));
+  stream->current_frame = pts_to_frame(stream->ffmpeg.frame->pts, stream);
 #if SHOWLOG_VIDEO_CURRENT_FRAME
   {
     char s[256];
@@ -150,7 +177,23 @@ static NODISCARD error grab(struct stream *const stream) {
   return eok();
 }
 
-static NODISCARD error seek(struct stream *stream, int frame) {
+static NODISCARD error grab_discard(struct stream *const stream) {
+  if (stream->eof_reached) {
+    return eok();
+  }
+  int const r = ffmpeg_grab_discard(&stream->ffmpeg);
+  if (r == AVERROR_EOF) {
+    stream->eof_reached = true;
+    return eok();
+  }
+  if (r < 0) {
+    return errffmpeg(r);
+  }
+  calc_current_frame(stream);
+  return eok();
+}
+
+static NODISCARD error seek(struct video *const v, struct stream *stream, int frame) {
 #if SHOWLOG_VIDEO_REPORT_INDEX_ENTRIES
   {
     char s[256];
@@ -162,11 +205,13 @@ static NODISCARD error seek(struct stream *stream, int frame) {
   double const start = now();
 #endif
   error err = eok();
-  int64_t time_stamp =
-      av_rescale_q(frame, av_inv_q(stream->ffmpeg.cctx->pkt_timebase), stream->ffmpeg.stream->avg_frame_rate);
-  if (stream->ffmpeg.stream->start_time != AV_NOPTS_VALUE) {
-    time_stamp += stream->ffmpeg.stream->start_time;
-  }
+  int64_t time_stamp = frame_to_pts(frame, stream);
+  int64_t const duration1s = (int64_t)(av_q2d(av_inv_q(stream->ffmpeg.cctx->pkt_timebase)));
+
+#if SHOWLOG_VIDEO_SEEK_SPEED
+  double const start_ffmpeg_seek = now();
+#endif
+  int64_t prevpts = AV_NOPTS_VALUE;
   for (;;) {
 #if SHOWLOG_VIDEO_SEEK
     {
@@ -194,10 +239,7 @@ static NODISCARD error seek(struct stream *stream, int frame) {
       goto cleanup;
     }
     if (stream->eof_reached) {
-#if SHOWLOG_VIDEO_SEEK
-      OutputDebugStringA("video_seek reach eof 1");
-#endif
-      err = errffmpeg(AVERROR_EOF);
+      // There is no hope of reaching the requested frame.
       goto cleanup;
     }
     if (stream->current_frame > frame) {
@@ -214,14 +256,33 @@ static NODISCARD error seek(struct stream *stream, int frame) {
         OutputDebugStringA(s);
       }
 #endif
-      // rewind 1s
-      time_stamp -= (int64_t)(av_q2d(av_inv_q(stream->ffmpeg.cctx->pkt_timebase)));
+      if (time_stamp < get_start_time(stream) && prevpts == stream->ffmpeg.packet->pts) {
+        // It seems that the pts value is not updated.
+        // Depending on the state of the video file, it may not be possible to play back correctly from start_time.
+        // Record the frame obtained at this timing as the valid lower frame.
+        v->valid_first_frame = stream->current_frame;
+        break;
+      } else {
+        time_stamp -= duration1s;
+      }
+      prevpts = stream->ffmpeg.packet->pts;
       continue;
     }
     break;
   }
+#if SHOWLOG_VIDEO_SEEK_SPEED
+  {
+    double const end = now();
+    char s[256];
+    ov_snprintf(s, 256, NULL, "v seek ffmpeg_seek: %0.4fs", end - start_ffmpeg_seek);
+    OutputDebugStringA(s);
+  }
+#endif
+#if SHOWLOG_VIDEO_SEEK_SPEED
+  double const start_grab = now();
+#endif
   while (stream->current_frame < frame) {
-    err = grab(stream);
+    err = grab_discard(stream);
     if (efailed(err)) {
       err = ethru(err);
       goto cleanup;
@@ -235,6 +296,14 @@ static NODISCARD error seek(struct stream *stream, int frame) {
       goto cleanup;
     }
   }
+#if SHOWLOG_VIDEO_SEEK_SPEED
+  {
+    double const end = now();
+    char s[256];
+    ov_snprintf(s, 256, NULL, "v seek skip grab: %0.4fs", end - start_grab);
+    OutputDebugStringA(s);
+  }
+#endif
 cleanup:
 #if SHOWLOG_VIDEO_SEEK_SPEED
 {
@@ -392,6 +461,10 @@ NODISCARD error video_read(struct video *const v, int64_t frame, void *buf, size
     return errg(err_invalid_arugment);
   }
 
+  if (v->valid_first_frame != AV_NOPTS_VALUE && frame < v->valid_first_frame) {
+    frame = v->valid_first_frame;
+  }
+
   bool need_seek = false;
   struct stream *stream = find_stream(v, frame, &need_seek);
 
@@ -405,13 +478,15 @@ NODISCARD error video_read(struct video *const v, int64_t frame, void *buf, size
 #endif
 
   if (need_seek) {
-    err = seek(stream, (int)frame);
+    err = seek(v, stream, (int)frame);
     if (efailed(err)) {
       err = ethru(err);
       goto cleanup;
     }
     if (stream->eof_reached) {
       stream->current_frame = frame;
+      *written = fill_blank(v, buf);
+      goto cleanup;
     }
   }
   int skip = (int)(frame - stream->current_frame);
@@ -424,22 +499,25 @@ NODISCARD error video_read(struct video *const v, int64_t frame, void *buf, size
 #endif
 
   for (int i = 0; i < skip; i++) {
-    err = grab(stream);
+    err = i + 1 == skip ? grab(stream) : grab_discard(stream);
     if (efailed(err)) {
       err = ethru(err);
       goto cleanup;
     }
     if (stream->eof_reached) {
 #if SHOWLOG_VIDEO_READ
-      OutputDebugStringA("video_read reach eof");
+      OutputDebugStringA("video_read reach eof in skip loop");
 #endif
-      // There is no hope of reaching the requested frame
-      // Use the last grabbed frame as it is
-      break;
+      stream->current_frame = frame;
+      *written = fill_blank(v, buf);
+      goto cleanup;
     }
   }
   *written = scale(v, stream, buf);
 cleanup:
+  if (efailed(err)) {
+    *written = fill_blank(v, buf);
+  }
   return err;
 }
 
@@ -555,6 +633,7 @@ NODISCARD error video_create(struct video **const vpp, struct video_options cons
   size_t const cap = opt->num_stream;
   *v = (struct video){
       .handle = opt->handle,
+      .valid_first_frame = AV_NOPTS_VALUE,
   };
   mtx_init(&v->mtx, mtx_plain);
 
@@ -599,8 +678,8 @@ NODISCARD error video_create(struct video **const vpp, struct video_options cons
     OutputDebugStringA(s);
   }
 #endif
-
   calc_current_frame(v->streams);
+
   v->sws_context = create_sws_context(v, opt->scaling);
   if (!v->sws_context) {
     err = emsg(err_type_generic, err_fail, &native_unmanaged_const(NSTR("sws_getContext failed")));
