@@ -39,7 +39,6 @@ struct audio_options {
   size_t num_stream;
   enum audio_index_mode index_mode;
   enum audio_sample_rate sample_rate;
-  bool use_sox;
 };
 
 NODISCARD error audio_create(struct audio **const app, struct audio_options const *const opt);

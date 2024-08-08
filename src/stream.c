@@ -82,7 +82,6 @@ static NODISCARD error create_audio(struct stream *sp, struct audio **a) {
                                .num_stream = (size_t)(config_get_number_of_stream(sp->config)),
                                .index_mode = config_get_audio_index_mode(sp->config),
                                .sample_rate = config_get_audio_sample_rate(sp->config),
-                               .use_sox = config_get_audio_use_sox(sp->config),
                            });
   if (efailed(err)) {
     err = ethru(err);
