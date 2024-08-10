@@ -107,14 +107,6 @@ void audio_get_info(struct audio const *const a, struct info_audio *const ai) {
 #endif
 }
 
-static NODISCARD error grab_next(struct stream *const stream) {
-  int const r = ffmpeg_grab(&stream->ffmpeg);
-  if (r < 0) {
-    return errffmpeg(r);
-  }
-  return eok();
-}
-
 static NODISCARD error seek(struct audio *const a,
                             struct resampler *const resampler,
                             struct stream *stream,
@@ -256,15 +248,15 @@ static NODISCARD error grab_next_frame(struct resampler *const resampler, struct
 #if SHOWLOG_AUDIO_READ
   OutputDebugStringA(__FILE_NAME__ " grab_next_frame");
 #endif
-  error err = grab_next(stream);
-  if (efailed(err)) {
-    return ethru(err);
+  int r = ffmpeg_grab(&stream->ffmpeg);
+  if (r < 0) {
+    return errffmpeg(r);
   }
-  int r = swr_convert(resampler->ctx,
-                      (void *)&resampler->buf,
-                      resampler->samples,
-                      (void *)stream->ffmpeg.frame->data,
-                      stream->ffmpeg.frame->nb_samples);
+  r = swr_convert(resampler->ctx,
+                  (void *)&resampler->buf,
+                  resampler->samples,
+                  (void *)stream->ffmpeg.frame->data,
+                  stream->ffmpeg.frame->nb_samples);
   if (r < 0) {
     return errffmpeg(r);
   }
@@ -427,6 +419,7 @@ cleanup:
   *written = read;
   return err;
 }
+
 static int create_sub_stream(void *userdata) {
   struct audio *const a = userdata;
   for (;;) {
