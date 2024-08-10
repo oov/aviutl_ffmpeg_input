@@ -12,7 +12,7 @@ NODISCARD error resampler_create(struct resampler **const rp, struct resampler_o
   }
   *resampler = (struct resampler){
       .gcd = gcd(opt->codecpar->sample_rate, opt->out_rate),
-      .pos_isr = AV_NOPTS_VALUE,
+      .pos = AV_NOPTS_VALUE,
       .samples = opt->out_rate * resampler_out_channels,
   };
   int r = av_samples_alloc(&resampler->buf, NULL, 2, resampler->samples, AV_SAMPLE_FMT_S16, 0);

@@ -28,10 +28,9 @@ static inline struct gcd {
 struct resampler {
   SwrContext *ctx;
   uint8_t *buf;
-  int64_t pos_isr; // write sample position in internal sample rate
-                   // (position in input sample rate * gcd.factor_b * gcd.factor_b / gcd.factor_a)
-  int samples;     // size of buf in samples
-  int written;     // number of samples written to buf
+  int64_t pos; // sample position in output sample rate
+  int samples; // size of buf in samples
+  int written; // number of samples written to buf
   struct gcd gcd;
 };
 
