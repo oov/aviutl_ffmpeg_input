@@ -16,6 +16,9 @@
 #define SHOWLOG_VIDEO_FIND_STREAM 0
 #define SHOWLOG_VIDEO_READ 0
 
+// It seems some decoders do not support discard.
+#define ffmpeg_grab_discard ffmpeg_grab
+
 static bool const is_output_yuy2 = true;
 
 struct stream {
