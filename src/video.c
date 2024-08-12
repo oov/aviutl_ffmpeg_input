@@ -8,8 +8,6 @@
 #include "now.h"
 
 #define SHOWLOG_VIDEO_GET_INFO 0
-#define SHOWLOG_VIDEO_GET_INTRA_INFO 0
-#define SHOWLOG_VIDEO_CURRENT_FRAME 0
 #define SHOWLOG_VIDEO_INIT_BENCH 0
 #define SHOWLOG_VIDEO_REPORT_INDEX_ENTRIES 0
 #define SHOWLOG_VIDEO_SEEK 0
@@ -22,7 +20,6 @@ static bool const is_output_yuy2 = true;
 
 struct stream {
   struct ffmpeg_stream ffmpeg;
-  int64_t current_frame;
   int64_t current_gop_intra_pts;
   struct timespec ts;
   bool eof_reached;
@@ -46,17 +43,12 @@ struct video {
   enum status status;
 
   struct SwsContext *sws_context;
-  int64_t valid_first_frame;
+  int64_t valid_first_pts;
   bool yuy2;
 };
 
 static inline int64_t get_start_time(struct stream const *const stream) {
   return stream->ffmpeg.stream->start_time == AV_NOPTS_VALUE ? 0 : stream->ffmpeg.stream->start_time;
-}
-
-static inline int64_t pts_to_frame(int64_t const pts, struct stream const *const stream) {
-  return av_rescale_q(
-      pts - get_start_time(stream), stream->ffmpeg.cctx->pkt_timebase, av_inv_q(stream->ffmpeg.stream->avg_frame_rate));
 }
 
 static inline int64_t frame_to_pts(int64_t const frame, struct stream const *const stream) {
@@ -124,76 +116,7 @@ void video_get_info(struct video const *const v, struct info_video *const vi) {
 #endif
 }
 
-static inline void calc_current_frame(struct stream *const stream) {
-  stream->current_frame = pts_to_frame(stream->ffmpeg.frame->pts, stream);
-#if SHOWLOG_VIDEO_CURRENT_FRAME
-  {
-    char s[256];
-    ov_snprintf(s,
-                256,
-                NULL,
-                "v frame: %d pts: %d key_frame: %d start_time: %d time_base:%f avg_frame_rate:%f",
-                (int)stream->current_frame,
-                (int)stream->ffmpeg.frame->pts,
-                stream->ffmpeg.frame->flags & AV_FRAME_FLAG_KEY ? 1 : 0,
-                (int)stream->ffmpeg.stream->start_time,
-                av_q2d(stream->ffmpeg.cctx->pkt_timebase),
-                av_q2d(stream->ffmpeg.stream->avg_frame_rate));
-    OutputDebugStringA(s);
-  }
-#endif
-  if (stream->ffmpeg.frame->flags & AV_FRAME_FLAG_KEY) {
-    stream->current_gop_intra_pts = stream->ffmpeg.frame->pts;
-#if SHOWLOG_VIDEO_GET_INTRA_INFO
-    {
-      char s[256];
-      ov_snprintf(s,
-                  256,
-                  NULL,
-                  "gop intra pts: %lld packet pts: %lld packet dts: %lld",
-                  stream->ffmpeg.frame->pts,
-                  stream->ffmpeg.packet->pts,
-                  stream->ffmpeg.packet->dts);
-      OutputDebugStringA(s);
-      // current_gop_intra_dts
-    }
-#endif
-  }
-}
-
-static NODISCARD error grab(struct stream *const stream) {
-  if (stream->eof_reached) {
-    return eok();
-  }
-  int const r = ffmpeg_grab(&stream->ffmpeg);
-  if (r == AVERROR_EOF) {
-    stream->eof_reached = true;
-    return eok();
-  }
-  if (r < 0) {
-    return errffmpeg(r);
-  }
-  calc_current_frame(stream);
-  return eok();
-}
-
-static NODISCARD error grab_discard(struct stream *const stream) {
-  if (stream->eof_reached) {
-    return eok();
-  }
-  int const r = ffmpeg_grab_discard(&stream->ffmpeg);
-  if (r == AVERROR_EOF) {
-    stream->eof_reached = true;
-    return eok();
-  }
-  if (r < 0) {
-    return errffmpeg(r);
-  }
-  calc_current_frame(stream);
-  return eok();
-}
-
-static NODISCARD error seek(struct video *const v, struct stream *stream, int frame) {
+static NODISCARD error seek(struct video *const v, struct stream *stream, int64_t const target_pts) {
 #if SHOWLOG_VIDEO_REPORT_INDEX_ENTRIES
   {
     char s[256];
@@ -205,12 +128,12 @@ static NODISCARD error seek(struct video *const v, struct stream *stream, int fr
   double const start = now();
 #endif
   error err = eok();
-  int64_t time_stamp = frame_to_pts(frame, stream);
   int64_t const duration1s = (int64_t)(av_q2d(av_inv_q(stream->ffmpeg.cctx->pkt_timebase)));
 
 #if SHOWLOG_VIDEO_SEEK_SPEED
   double const start_ffmpeg_seek = now();
 #endif
+  int64_t seek_target = target_pts;
   int64_t prevpts = AV_NOPTS_VALUE;
   for (;;) {
 #if SHOWLOG_VIDEO_SEEK
@@ -220,29 +143,31 @@ static NODISCARD error seek(struct video *const v, struct stream *stream, int fr
                   256,
                   NULL,
                   "req_pts:%lld, frame: %d tb: %f fr: %f",
-                  time_stamp,
+                  seek_target,
                   frame,
                   av_q2d(av_inv_q(stream->ffmpeg.cctx->pkt_timebase)),
                   av_q2d(stream->ffmpeg.stream->avg_frame_rate));
       OutputDebugStringA(s);
     }
 #endif
-    err = ffmpeg_seek(&stream->ffmpeg, time_stamp);
+    err = ffmpeg_seek(&stream->ffmpeg, seek_target);
     if (efailed(err)) {
       err = ethru(err);
+      goto cleanup;
+    }
+    int const r = ffmpeg_grab(&stream->ffmpeg);
+    if (r == AVERROR_EOF) {
+      // There is no hope of reaching the requested frame.
+      stream->eof_reached = true;
+      goto cleanup;
+    }
+    if (r < 0) {
+      err = errffmpeg(r);
       goto cleanup;
     }
     stream->eof_reached = false;
-    err = grab(stream);
-    if (efailed(err)) {
-      err = ethru(err);
-      goto cleanup;
-    }
-    if (stream->eof_reached) {
-      // There is no hope of reaching the requested frame.
-      goto cleanup;
-    }
-    if (stream->current_frame > frame) {
+
+    if (stream->ffmpeg.frame->pts > target_pts) {
 #if SHOWLOG_VIDEO_SEEK_ADJUST
       {
         char s[256];
@@ -251,21 +176,21 @@ static NODISCARD error seek(struct video *const v, struct stream *stream, int fr
                     NULL,
                     "v adjust target: %d current: %lld rewind: %f",
                     frame,
-                    stream->current_frame,
+                    pts_to_frame(stream->ffmpeg.frame->pts, stream),
                     av_q2d(av_inv_q(stream->ffmpeg.cctx->pkt_timebase)));
         OutputDebugStringA(s);
       }
 #endif
-      if (time_stamp < get_start_time(stream) && prevpts == stream->ffmpeg.packet->pts) {
+      if (seek_target < get_start_time(stream) && prevpts == stream->ffmpeg.frame->pts) {
         // It seems that the pts value is not updated.
         // Depending on the state of the video file, it may not be possible to play back correctly from start_time.
         // Record the frame obtained at this timing as the valid lower frame.
-        v->valid_first_frame = stream->current_frame;
+        v->valid_first_pts = stream->ffmpeg.frame->pts;
         break;
       } else {
-        time_stamp -= duration1s;
+        seek_target -= duration1s;
       }
-      prevpts = stream->ffmpeg.packet->pts;
+      prevpts = stream->ffmpeg.frame->pts;
       continue;
     }
     break;
@@ -278,23 +203,49 @@ static NODISCARD error seek(struct video *const v, struct stream *stream, int fr
     OutputDebugStringA(s);
   }
 #endif
+
+  if (stream->ffmpeg.frame->flags & AV_FRAME_FLAG_KEY) {
+    stream->current_gop_intra_pts = stream->ffmpeg.frame->pts;
+  }
+
 #if SHOWLOG_VIDEO_SEEK_SPEED
   double const start_grab = now();
 #endif
-  while (stream->current_frame < frame) {
-    err = grab_discard(stream);
-    if (efailed(err)) {
-      err = ethru(err);
-      goto cleanup;
-    }
-    if (stream->eof_reached) {
+  int64_t const skip_frames = av_rescale_q_rnd(target_pts - stream->ffmpeg.frame->pts,
+                                               stream->ffmpeg.cctx->pkt_timebase,
+                                               av_inv_q(stream->ffmpeg.stream->avg_frame_rate),
+                                               AV_ROUND_UP);
+  for (int i = 0; i < skip_frames && stream->ffmpeg.frame->pts < target_pts; ++i) {
+    int const r = i >= skip_frames - 1 ? ffmpeg_grab(&stream->ffmpeg) : ffmpeg_grab_discard(&stream->ffmpeg);
+    if (r == AVERROR_EOF) {
+      stream->eof_reached = true;
 #if SHOWLOG_VIDEO_SEEK
       OutputDebugStringA("video_seek reach eof 2");
 #endif
       // There is no hope of reaching the requested frame
-      // Use the last grabbed frame as it is
       goto cleanup;
     }
+    if (r < 0) {
+      err = errffmpeg(r);
+      goto cleanup;
+    }
+
+    if (stream->ffmpeg.frame->flags & AV_FRAME_FLAG_KEY) {
+      stream->current_gop_intra_pts = stream->ffmpeg.frame->pts;
+    }
+
+#if SHOWLOG_VIDEO_SEEK
+    {
+      char s[256];
+      ov_snprintf(s,
+                  256,
+                  NULL,
+                  "v seek target: %lld cur: %lld",
+                  frame_to_pts(frame, stream),
+                  stream->ffmpeg.frame->pts - get_start_time(stream));
+      OutputDebugStringA(s);
+    }
+#endif
   }
 #if SHOWLOG_VIDEO_SEEK_SPEED
   {
@@ -349,7 +300,7 @@ static int create_sub_stream(void *userdata) {
   return 0;
 }
 
-static struct stream *find_stream(struct video *const v, int64_t const frame, bool *const need_seek) {
+static struct stream *find_stream(struct video *const v, int64_t const pts, bool *const need_seek) {
   struct timespec ts;
   timespec_get(&ts, TIME_UTC);
   mtx_lock(&v->mtx);
@@ -361,13 +312,13 @@ static struct stream *find_stream(struct video *const v, int64_t const frame, bo
   }
   mtx_unlock(&v->mtx);
 
-  // find same frame or near
+  // find exact or near
   {
     struct stream *nearest = NULL;
     int64_t dist = INT64_MAX;
     for (size_t i = 0; i < num_stream; ++i) {
       struct stream *const stream = v->streams + i;
-      if (frame == stream->current_frame) {
+      if (pts == stream->ffmpeg.frame->pts) {
         stream->ts = ts;
         *need_seek = false;
 #if SHOWLOG_VIDEO_FIND_STREAM
@@ -380,14 +331,17 @@ static struct stream *find_stream(struct video *const v, int64_t const frame, bo
       if (stream->current_gop_intra_pts == AV_NOPTS_VALUE) {
         continue;
       }
-      int64_t const d = frame - stream->current_frame;
+      int64_t const d = pts - stream->ffmpeg.frame->pts;
       if (d > 0 && dist > d) {
         nearest = stream;
         dist = d;
       }
     }
     if (nearest) {
-      if (frame - nearest->current_frame < 15) {
+      // if the distance is less than 15 frames, we use it.
+      int64_t const pts15frames =
+          av_rescale_q(15, av_inv_q(nearest->ffmpeg.cctx->pkt_timebase), nearest->ffmpeg.stream->avg_frame_rate);
+      if (dist < pts15frames) {
         nearest->ts = ts;
         *need_seek = false;
 #if SHOWLOG_VIDEO_FIND_STREAM
@@ -402,13 +356,8 @@ static struct stream *find_stream(struct video *const v, int64_t const frame, bo
 
   // find same gop
   if (avformat_index_get_entries_count(v->streams[0].ffmpeg.stream) > 1) {
-    int64_t time_stamp = av_rescale_q(
-        frame, av_inv_q(v->streams[0].ffmpeg.cctx->pkt_timebase), v->streams[0].ffmpeg.stream->avg_frame_rate);
-    if (v->streams[0].ffmpeg.stream->start_time != AV_NOPTS_VALUE) {
-      time_stamp += v->streams[0].ffmpeg.stream->start_time;
-    }
     AVIndexEntry const *const idx =
-        avformat_index_get_entry_from_timestamp(v->streams[0].ffmpeg.stream, time_stamp, AVSEEK_FLAG_BACKWARD);
+        avformat_index_get_entry_from_timestamp(v->streams[0].ffmpeg.stream, pts, AVSEEK_FLAG_BACKWARD);
     if (idx) {
       int64_t const gop_intra_pts = idx->timestamp;
       // find nearest stream
@@ -416,10 +365,10 @@ static struct stream *find_stream(struct video *const v, int64_t const frame, bo
       int64_t gap = INT64_MAX;
       for (size_t i = 0; i < num_stream; ++i) {
         struct stream *const stream = v->streams + i;
-        if (stream->current_gop_intra_pts != gop_intra_pts || frame < stream->current_frame) {
+        if (stream->current_gop_intra_pts != gop_intra_pts || pts < stream->ffmpeg.frame->pts) {
           continue;
         }
-        if (nearest == NULL || gap > frame - stream->current_frame) {
+        if (nearest == NULL || gap > pts - stream->ffmpeg.frame->pts) {
           nearest = stream;
         }
       }
@@ -461,58 +410,68 @@ NODISCARD error video_read(struct video *const v, int64_t frame, void *buf, size
     return errg(err_invalid_arugment);
   }
 
-  if (v->valid_first_frame != AV_NOPTS_VALUE && frame < v->valid_first_frame) {
-    frame = v->valid_first_frame;
+  int64_t const target_pts = frame_to_pts(frame, v->streams);
+  if (v->valid_first_pts != AV_NOPTS_VALUE && target_pts < v->valid_first_pts) {
+    frame = v->valid_first_pts;
   }
 
   bool need_seek = false;
-  struct stream *stream = find_stream(v, frame, &need_seek);
+  struct stream *stream = find_stream(v, target_pts, &need_seek);
 
   error err = eok();
 #if SHOWLOG_VIDEO_READ
   {
     char s[256];
-    wsprintfA(s, "reqframe: %d / now: %d", frame, (int)stream->current_frame);
+    ov_snprintf(s, 256, NULL, "#%zu reqframe: %d / now: %d", stream - v->streams, frame, (int)stream->current_frame);
     OutputDebugStringA(s);
   }
 #endif
 
   if (need_seek) {
-    err = seek(v, stream, (int)frame);
+#if SHOWLOG_VIDEO_READ
+    OutputDebugStringA("video_read seek");
+#endif
+    err = seek(v, stream, target_pts);
     if (efailed(err)) {
       err = ethru(err);
       goto cleanup;
     }
     if (stream->eof_reached) {
-      stream->current_frame = frame;
       *written = fill_blank(v, buf);
       goto cleanup;
     }
   }
-  int skip = (int)(frame - stream->current_frame);
-#if SHOWLOG_VIDEO_READ
-  {
-    char s[256];
-    wsprintfA(s, "current_frame: %d target_frame: %d skip: %d", (int)stream->current_frame, (int)frame, skip);
-    OutputDebugStringA(s);
-  }
-#endif
 
-  for (int i = 0; i < skip; i++) {
-    err = i + 1 == skip ? grab(stream) : grab_discard(stream);
-    if (efailed(err)) {
-      err = ethru(err);
-      goto cleanup;
-    }
-    if (stream->eof_reached) {
+  int64_t const skip_frames = av_rescale_q_rnd(target_pts - stream->ffmpeg.frame->pts,
+                                               stream->ffmpeg.cctx->pkt_timebase,
+                                               av_inv_q(stream->ffmpeg.stream->avg_frame_rate),
+                                               AV_ROUND_UP);
+  for (int i = 0; i < skip_frames && stream->ffmpeg.frame->pts < target_pts; ++i) {
+    int const r = i >= skip_frames - 1 ? ffmpeg_grab(&stream->ffmpeg) : ffmpeg_grab_discard(&stream->ffmpeg);
+    if (r == AVERROR_EOF) {
+      stream->eof_reached = true;
 #if SHOWLOG_VIDEO_READ
       OutputDebugStringA("video_read reach eof in skip loop");
 #endif
-      stream->current_frame = frame;
+      stream->current_gop_intra_pts = AV_NOPTS_VALUE;
       *written = fill_blank(v, buf);
       goto cleanup;
     }
+    if (r < 0) {
+      err = errffmpeg(r);
+      goto cleanup;
+    }
+    if (stream->ffmpeg.frame->flags & AV_FRAME_FLAG_KEY) {
+      stream->current_gop_intra_pts = stream->ffmpeg.frame->pts;
+    }
   }
+#if SHOWLOG_VIDEO_READ
+  {
+    char s[256];
+    ov_snprintf(s, 256, NULL, "pts: %lld", stream->ffmpeg.frame->pts);
+    OutputDebugStringA(s);
+  }
+#endif
   *written = scale(v, stream, buf);
 cleanup:
   if (efailed(err)) {
@@ -633,7 +592,7 @@ NODISCARD error video_create(struct video **const vpp, struct video_options cons
   size_t const cap = opt->num_stream;
   *v = (struct video){
       .handle = opt->handle,
-      .valid_first_frame = AV_NOPTS_VALUE,
+      .valid_first_pts = AV_NOPTS_VALUE,
   };
   mtx_init(&v->mtx, mtx_plain);
 
@@ -678,7 +637,6 @@ NODISCARD error video_create(struct video **const vpp, struct video_options cons
     OutputDebugStringA(s);
   }
 #endif
-  calc_current_frame(v->streams);
 
   v->sws_context = create_sws_context(v, opt->scaling);
   if (!v->sws_context) {

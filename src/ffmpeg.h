@@ -48,7 +48,6 @@ struct ffmpeg_stream {
   AVCodec const *codec;
   AVCodecContext *cctx;
   AVFrame *frame;
-  AVFrame *frame2;
   AVPacket *packet;
 };
 
@@ -70,7 +69,6 @@ NODISCARD error ffmpeg_open(struct ffmpeg_stream *const fs, struct ffmpeg_open_o
 void ffmpeg_close(struct ffmpeg_stream *const fs);
 
 NODISCARD error ffmpeg_seek(struct ffmpeg_stream *const fs, int64_t const timestamp_in_stream_time_base);
-NODISCARD error ffmpeg_seek_head(struct ffmpeg_stream *const fs);
 NODISCARD error ffmpeg_seek_bytes(struct ffmpeg_stream *const fs, int64_t const pos);
 
 int ffmpeg_read_packet(struct ffmpeg_stream *const fs);

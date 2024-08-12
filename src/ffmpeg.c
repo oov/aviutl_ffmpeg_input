@@ -357,9 +357,6 @@ void ffmpeg_close(struct ffmpeg_stream *const fs) {
   if (fs->packet) {
     av_packet_free(&fs->packet);
   }
-  if (fs->frame2) {
-    av_frame_free(&fs->frame2);
-  }
   if (fs->frame) {
     av_frame_free(&fs->frame);
   }
@@ -383,7 +380,6 @@ NODISCARD error ffmpeg_open_without_codec(struct ffmpeg_stream *const fs, struct
   }
   AVFormatContext *fctx = NULL;
   AVFrame *frame = NULL;
-  AVFrame *frame2 = NULL;
   AVPacket *packet = NULL;
   error err = create_format_context(&fctx,
                                     &(struct create_format_context_options){
@@ -413,11 +409,6 @@ NODISCARD error ffmpeg_open_without_codec(struct ffmpeg_stream *const fs, struct
     err = emsg(err_type_generic, err_fail, &native_unmanaged_const(NSTR("av_frame_alloc failed")));
     goto cleanup;
   }
-  frame2 = av_frame_alloc();
-  if (!frame2) {
-    err = emsg(err_type_generic, err_fail, &native_unmanaged_const(NSTR("av_frame_alloc failed")));
-    goto cleanup;
-  }
   packet = av_packet_alloc();
   if (!packet) {
     err = emsg(err_type_generic, err_fail, &native_unmanaged_const(NSTR("av_packet_alloc failed")));
@@ -426,16 +417,12 @@ NODISCARD error ffmpeg_open_without_codec(struct ffmpeg_stream *const fs, struct
   *fs = (struct ffmpeg_stream){
       .fctx = fctx,
       .frame = frame,
-      .frame2 = frame2,
       .packet = packet,
   };
 cleanup:
   if (efailed(err)) {
     if (packet) {
       av_packet_free(&packet);
-    }
-    if (frame2) {
-      av_frame_free(&frame2);
     }
     if (frame) {
       av_frame_free(&frame);
@@ -512,21 +499,6 @@ NODISCARD error ffmpeg_seek(struct ffmpeg_stream *const fs, int64_t const timest
   return eok();
 }
 
-NODISCARD error ffmpeg_seek_head(struct ffmpeg_stream *const fs) {
-  int r = av_seek_frame(fs->fctx, fs->stream->index, 0, AVSEEK_FLAG_BYTE);
-  if (r < 0) {
-    r = av_seek_frame(fs->fctx, fs->stream->index, 0, AVSEEK_FLAG_FRAME);
-  }
-  if (r < 0) {
-    r = av_seek_frame(fs->fctx, fs->stream->index, 0, AVSEEK_FLAG_BACKWARD);
-  }
-  if (r < 0) {
-    return errffmpeg(r);
-  }
-  avcodec_flush_buffers(fs->cctx);
-  return eok();
-}
-
 #if 0
 // It should work with mkv, but it doesn't seem to work as expected...
 NODISCARD error ffmpeg_seek_bytes(struct ffmpeg_stream *const fs, int64_t const pos) {
@@ -540,13 +512,10 @@ NODISCARD error ffmpeg_seek_bytes(struct ffmpeg_stream *const fs, int64_t const 
 #endif
 
 static int inline receive_frame(struct ffmpeg_stream *const fs) {
-  int const r = avcodec_receive_frame(fs->cctx, fs->frame2);
+  int const r = avcodec_receive_frame(fs->cctx, fs->frame);
   if (r < 0) {
     return r;
   }
-  AVFrame *const temp = fs->frame;
-  fs->frame = fs->frame2;
-  fs->frame2 = temp;
   return r;
 }
 
