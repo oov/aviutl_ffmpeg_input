@@ -207,7 +207,7 @@ static NODISCARD error seek(struct video *const v, struct stream *stream, int64_
   }
 #endif
 
-  if (stream->ffmpeg.frame->flags & AV_FRAME_FLAG_KEY) {
+  if (ffmpeg_is_key_frame(stream->ffmpeg.frame)) {
     stream->current_gop_intra_pts = stream->ffmpeg.frame->pts;
   }
 
@@ -233,7 +233,7 @@ static NODISCARD error seek(struct video *const v, struct stream *stream, int64_
       goto cleanup;
     }
 
-    if (stream->ffmpeg.frame->flags & AV_FRAME_FLAG_KEY) {
+    if (ffmpeg_is_key_frame(stream->ffmpeg.frame)) {
       stream->current_gop_intra_pts = stream->ffmpeg.frame->pts;
     }
 
@@ -464,7 +464,7 @@ NODISCARD error video_read(struct video *const v, int64_t frame, void *buf, size
       err = errffmpeg(r);
       goto cleanup;
     }
-    if (stream->ffmpeg.frame->flags & AV_FRAME_FLAG_KEY) {
+    if (ffmpeg_is_key_frame(stream->ffmpeg.frame)) {
       stream->current_gop_intra_pts = stream->ffmpeg.frame->pts;
     }
   }

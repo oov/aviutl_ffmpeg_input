@@ -24,7 +24,11 @@ NODISCARD error resampler_create(struct resampler **const rp, struct resampler_o
                           &(AVChannelLayout)AV_CHANNEL_LAYOUT_STEREO,
                           resampler_out_sample_format,
                           opt->out_rate,
+#if LIBSWRESAMPLE_VERSION_INT < AV_VERSION_INT(5, 0, 0)
+                          ov_deconster_(&opt->codecpar->ch_layout),
+#else
                           &opt->codecpar->ch_layout,
+#endif
                           opt->codecpar->format,
                           opt->codecpar->sample_rate,
                           0,

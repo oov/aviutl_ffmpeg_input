@@ -490,7 +490,7 @@ cleanup:
 }
 
 NODISCARD error ffmpeg_seek(struct ffmpeg_stream *const fs, int64_t const timestamp_in_stream_time_base) {
-  int const r = avformat_seek_file(
+  int r = avformat_seek_file(
       fs->fctx, fs->stream->index, INT64_MIN, timestamp_in_stream_time_base, timestamp_in_stream_time_base, 0);
   if (r < 0) {
     return errffmpeg(r);
@@ -499,25 +499,7 @@ NODISCARD error ffmpeg_seek(struct ffmpeg_stream *const fs, int64_t const timest
   return eok();
 }
 
-#if 0
-// It should work with mkv, but it doesn't seem to work as expected...
-NODISCARD error ffmpeg_seek_bytes(struct ffmpeg_stream *const fs, int64_t const pos) {
-  int const r = avformat_seek_file(fs->fctx, fs->stream->index, INT64_MIN, pos, INT64_MAX, AVSEEK_FLAG_BYTE);
-  if (r < 0) {
-    return errffmpeg(r);
-  }
-  avcodec_flush_buffers(fs->cctx);
-  return eok();
-}
-#endif
-
-static int inline receive_frame(struct ffmpeg_stream *const fs) {
-  int const r = avcodec_receive_frame(fs->cctx, fs->frame);
-  if (r < 0) {
-    return r;
-  }
-  return r;
-}
+static int inline receive_frame(struct ffmpeg_stream *const fs) { return avcodec_receive_frame(fs->cctx, fs->frame); }
 
 int ffmpeg_read_packet(struct ffmpeg_stream *const fs) {
   for (;;) {
@@ -538,49 +520,46 @@ static int inline send_packet(struct ffmpeg_stream *const fs) { return avcodec_s
 static int inline send_null_packet(struct ffmpeg_stream *const fs) { return avcodec_send_packet(fs->cctx, NULL); }
 
 static int grab(struct ffmpeg_stream *const fs, bool const discard) {
-  int r = 0;
-  for (;;) {
-    r = receive_frame(fs);
+  int r;
+receive:
+  r = receive_frame(fs);
+  switch (r) {
+  case 0:
+    return r;
+  case AVERROR_EOF:
+  case AVERROR(EAGAIN):
+  case AVERROR_INPUT_CHANGED:
+    break;
+  default:
+    return r;
+  }
+  r = ffmpeg_read_packet(fs);
+  if (r < 0) {
+    // flush
+    r = send_null_packet(fs);
     switch (r) {
     case 0:
-      goto cleanup;
-    case AVERROR_EOF:
     case AVERROR(EAGAIN):
-    case AVERROR_INPUT_CHANGED:
-      break;
+      goto receive;
+    case AVERROR_EOF: // decoder has been flushed
+      return r;
     default:
-      goto cleanup;
-    }
-    r = ffmpeg_read_packet(fs);
-    if (r < 0) {
-      // flush
-      r = send_null_packet(fs);
-      switch (r) {
-      case 0:
-      case AVERROR(EAGAIN):
-        continue;
-      case AVERROR_EOF: // decoder has been flushed
-        goto cleanup;
-      default:
-        goto cleanup;
-      }
-    }
-    if (discard) {
-      fs->packet->flags |= AV_PKT_FLAG_DISCARD;
-    }
-    r = send_packet(fs);
-    switch (r) {
-    case 0:
-      continue;
-    case AVERROR(EAGAIN):
-      // not ready to accept avcodec_send_packet, must call avcodec_receive_frame.
-      continue;
-    default:
-      goto cleanup;
+      return r;
     }
   }
-cleanup:
-  return r;
+  if (discard) {
+    fs->packet->flags |= AV_PKT_FLAG_DISCARD;
+  }
+  r = send_packet(fs);
+  switch (r) {
+  case 0:
+    goto receive;
+  case AVERROR(EAGAIN):
+    // not ready to accept avcodec_send_packet, must call avcodec_receive_frame.
+    goto receive;
+  default:
+    return r;
+  }
 }
 
 int ffmpeg_grab(struct ffmpeg_stream *const fs) { return grab(fs, false); }

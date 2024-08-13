@@ -74,3 +74,11 @@ NODISCARD error ffmpeg_seek_bytes(struct ffmpeg_stream *const fs, int64_t const 
 int ffmpeg_read_packet(struct ffmpeg_stream *const fs);
 int ffmpeg_grab(struct ffmpeg_stream *const fs);
 int ffmpeg_grab_discard(struct ffmpeg_stream *const fs);
+
+static bool inline ffmpeg_is_key_frame(AVFrame const *const frame) {
+#if LIBAVUTIL_VERSION_INT < AV_VERSION_INT(58, 0, 0)
+  return frame->key_frame == 1 || frame->pict_type == AV_PICTURE_TYPE_I;
+#else
+  return frame->flags & AV_FRAME_FLAG_KEY || frame->pict_type == AV_PICTURE_TYPE_I;
+#endif
+}
