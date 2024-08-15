@@ -60,6 +60,9 @@ struct ffmpeg_open_options {
   enum AVMediaType media_type;
   AVCodec const *codec;
   char const *preferred_decoders;
+  // Sometimes, even if opening is successful, grabbing fails.
+  // If this is set to true, it will test if grabbing is successful.
+  bool try_grab;
 };
 
 NODISCARD error ffmpeg_open_without_codec(struct ffmpeg_stream *const fs, struct ffmpeg_open_options const *const opt);

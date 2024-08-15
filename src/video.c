@@ -290,6 +290,7 @@ static int create_sub_stream(void *userdata) {
                                 .handle = v->handle,
                                 .media_type = AVMEDIA_TYPE_VIDEO,
                                 .codec = v->streams[0].ffmpeg.codec,
+                                .try_grab = false,
                             });
     if (efailed(err)) {
       err = ethru(err);

@@ -438,6 +438,7 @@ static int create_sub_stream(void *userdata) {
                                 .handle = a->handle,
                                 .media_type = AVMEDIA_TYPE_AUDIO,
                                 .codec = a->streams[0].ffmpeg.codec,
+                                .try_grab = false,
                             });
     if (efailed(err)) {
       err = ethru(err);

@@ -277,7 +277,8 @@ static AVCodec const *find_preferred(AVCodec const *(*finder)(char const *name),
 static NODISCARD error open_codec(AVCodec const *const codec,
                                   AVCodecParameters const *const codec_params,
                                   AVDictionary **const options,
-                                  struct ffmpeg_stream *const fs) {
+                                  struct ffmpeg_stream *const fs,
+                                  bool const try_grab) {
   error err = eok();
   AVCodecContext *ctx = avcodec_alloc_context3(codec);
   if (!ctx) {
@@ -297,10 +298,12 @@ static NODISCARD error open_codec(AVCodec const *const codec,
   }
   fs->codec = codec;
   fs->cctx = ctx;
-  r = ffmpeg_grab(fs);
-  if (r < 0) {
-    err = errffmpeg(r);
-    goto cleanup;
+  if (try_grab) {
+    r = ffmpeg_grab(fs);
+    if (r < 0) {
+      err = errffmpeg(r);
+      goto cleanup;
+    }
   }
 cleanup:
   if (efailed(err)) {
@@ -317,7 +320,8 @@ static NODISCARD error open_preferred_codec(char const *const decoders,
                                             AVCodec const *const codec,
                                             AVCodecParameters const *const codec_params,
                                             AVDictionary **const options,
-                                            struct ffmpeg_stream *const fs) {
+                                            struct ffmpeg_stream *const fs,
+                                            bool const try_grab) {
   if (!codec || !codec_params || !fs) {
     return errg(err_invalid_arugment);
   }
@@ -326,7 +330,7 @@ static NODISCARD error open_preferred_codec(char const *const decoders,
     size_t pos = 0;
     AVCodec const *preferred = NULL;
     while ((preferred = find_preferred(avcodec_find_decoder_by_name, decoders, codec, &pos)) != NULL) {
-      err = open_codec(preferred, codec_params, options, fs);
+      err = open_codec(preferred, codec_params, options, fs, try_grab);
       if (efailed(err)) {
         err = ethru(err);
         wchar_t buf[1024];
@@ -344,7 +348,7 @@ static NODISCARD error open_preferred_codec(char const *const decoders,
       goto cleanup;
     }
   }
-  err = open_codec(codec, codec_params, options, fs);
+  err = open_codec(codec, codec_params, options, fs, try_grab);
   if (efailed(err)) {
     err = ethru(err);
     goto cleanup;
@@ -447,7 +451,7 @@ NODISCARD error ffmpeg_open(struct ffmpeg_stream *const fs, struct ffmpeg_open_o
   }
   fs->stream = fs->fctx->streams[stream_index];
   if (opt->codec != NULL) {
-    err = open_codec(opt->codec, fs->stream->codecpar, NULL, fs);
+    err = open_codec(opt->codec, fs->stream->codecpar, NULL, fs, opt->try_grab);
     if (efailed(err)) {
       err = ethru(err);
       goto cleanup;
@@ -458,7 +462,7 @@ NODISCARD error ffmpeg_open(struct ffmpeg_stream *const fs, struct ffmpeg_open_o
       err = emsg(err_type_generic, err_fail, &native_unmanaged_const(NSTR("decoder not found")));
       goto cleanup;
     }
-    err = open_preferred_codec(opt->preferred_decoders, orig_codec, fs->stream->codecpar, NULL, fs);
+    err = open_preferred_codec(opt->preferred_decoders, orig_codec, fs->stream->codecpar, NULL, fs, opt->try_grab);
     if (efailed(err)) {
       err = ethru(err);
       goto cleanup;
