@@ -396,9 +396,6 @@ NODISCARD error ffmpeg_open_without_codec(struct ffmpeg_stream *const fs, struct
     err = errffmpeg(r);
     goto cleanup;
   }
-#if 0
-  OutputDebugStringA(fctx->iformat->flags & AVFMT_NO_BYTE_SEEK ? "no byte seek" : "support byte seek");
-#endif
   r = avformat_find_stream_info(fctx, NULL);
   if (r < 0) {
     err = errffmpeg(r);
