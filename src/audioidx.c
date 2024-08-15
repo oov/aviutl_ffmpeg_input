@@ -52,7 +52,8 @@ static int indexer(void *userdata) {
     goto cleanup;
   }
   // We don't need a decoder, so just assign the stream.
-  fs.stream = ffmpeg_find_stream(&fs, AVMEDIA_TYPE_AUDIO);
+  int const stream_index = av_find_best_stream(fs.fctx, AVMEDIA_TYPE_AUDIO, -1, -1, NULL, 0);
+  fs.stream = fs.fctx->streams[stream_index];
 
   int64_t const video_start_time = av_rescale_q(ip->video_start_time, AV_TIME_BASE_Q, fs.stream->time_base);
   int64_t const duration = av_rescale_q(fs.fctx->duration, AV_TIME_BASE_Q, fs.stream->time_base);

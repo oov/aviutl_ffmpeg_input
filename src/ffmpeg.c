@@ -434,16 +434,6 @@ cleanup:
   return err;
 }
 
-AVStream *ffmpeg_find_stream(struct ffmpeg_stream *const fs, enum AVMediaType media_type) {
-  AVFormatContext const *const fctx = fs->fctx;
-  for (unsigned int i = 0; i < fctx->nb_streams; ++i) {
-    if (fctx->streams[i]->codecpar->codec_type == media_type) {
-      return fctx->streams[i];
-    }
-  }
-  return NULL;
-}
-
 NODISCARD error ffmpeg_open(struct ffmpeg_stream *const fs, struct ffmpeg_open_options const *const opt) {
   if (!opt || (!opt->filepath && (opt->handle == NULL || opt->handle == INVALID_HANDLE_VALUE))) {
     return errg(err_invalid_arugment);
@@ -453,25 +443,25 @@ NODISCARD error ffmpeg_open(struct ffmpeg_stream *const fs, struct ffmpeg_open_o
     err = ethru(err);
     goto cleanup;
   }
-  AVStream *const stream = ffmpeg_find_stream(fs, opt->media_type);
-  if (!stream) {
+  int const stream_index = av_find_best_stream(fs->fctx, opt->media_type, -1, -1, NULL, 0);
+  if (stream_index < 0) {
     err = emsg(err_type_generic, err_fail, &native_unmanaged_const(NSTR("stream not found")));
     goto cleanup;
   }
-  fs->stream = stream;
+  fs->stream = fs->fctx->streams[stream_index];
   if (opt->codec != NULL) {
-    err = open_codec(opt->codec, stream->codecpar, NULL, fs);
+    err = open_codec(opt->codec, fs->stream->codecpar, NULL, fs);
     if (efailed(err)) {
       err = ethru(err);
       goto cleanup;
     }
   } else {
-    AVCodec const *const orig_codec = avcodec_find_decoder(stream->codecpar->codec_id);
+    AVCodec const *const orig_codec = avcodec_find_decoder(fs->stream->codecpar->codec_id);
     if (!orig_codec) {
       err = emsg(err_type_generic, err_fail, &native_unmanaged_const(NSTR("decoder not found")));
       goto cleanup;
     }
-    err = open_preferred_codec(opt->preferred_decoders, orig_codec, stream->codecpar, NULL, fs);
+    err = open_preferred_codec(opt->preferred_decoders, orig_codec, fs->stream->codecpar, NULL, fs);
     if (efailed(err)) {
       err = ethru(err);
       goto cleanup;
