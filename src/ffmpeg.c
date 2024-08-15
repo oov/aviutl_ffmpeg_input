@@ -439,6 +439,8 @@ NODISCARD error ffmpeg_open(struct ffmpeg_stream *const fs, struct ffmpeg_open_o
   if (!opt || (!opt->filepath && (opt->handle == NULL || opt->handle == INVALID_HANDLE_VALUE))) {
     return errg(err_invalid_arugment);
   }
+  AVDictionary *options = NULL;
+
   error err = ffmpeg_open_without_codec(fs, opt);
   if (efailed(err)) {
     err = ethru(err);
@@ -451,7 +453,7 @@ NODISCARD error ffmpeg_open(struct ffmpeg_stream *const fs, struct ffmpeg_open_o
   }
   fs->stream = fs->fctx->streams[stream_index];
   if (opt->codec != NULL) {
-    err = open_codec(opt->codec, fs->stream->codecpar, NULL, fs, opt->try_grab);
+    err = open_codec(opt->codec, fs->stream->codecpar, &options, fs, opt->try_grab);
     if (efailed(err)) {
       err = ethru(err);
       goto cleanup;
@@ -462,7 +464,7 @@ NODISCARD error ffmpeg_open(struct ffmpeg_stream *const fs, struct ffmpeg_open_o
       err = emsg(err_type_generic, err_fail, &native_unmanaged_const(NSTR("decoder not found")));
       goto cleanup;
     }
-    err = open_preferred_codec(opt->preferred_decoders, orig_codec, fs->stream->codecpar, NULL, fs, opt->try_grab);
+    err = open_preferred_codec(opt->preferred_decoders, orig_codec, fs->stream->codecpar, &options, fs, opt->try_grab);
     if (efailed(err)) {
       err = ethru(err);
       goto cleanup;
@@ -474,6 +476,9 @@ NODISCARD error ffmpeg_open(struct ffmpeg_stream *const fs, struct ffmpeg_open_o
     fs->cctx->pix_fmt = AV_PIX_FMT_NV12;
   }
 cleanup:
+  if (options) {
+    av_dict_free(&options);
+  }
   if (efailed(err)) {
     ffmpeg_close(fs);
   }
