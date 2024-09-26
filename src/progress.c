@@ -40,7 +40,7 @@ static LRESULT CALLBACK window_proc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM l
   case WM_USER: {
     struct progress *const pg = GetPropW(hwnd, prop_name);
     RECT r;
-    int h = (int)(OV_ARRAY_LENGTH(pg->ctx)) * height_per_item;
+    int h = (int)(OV_ARRAY_LENGTH(pg->ctx))*height_per_item;
     GetWindowRect(g_progress.exedit, &r);
     SetWindowPos(hwnd, HWND_TOPMOST, r.right - width - 32, r.bottom - h - 32, width, h, SWP_NOREDRAW);
     InvalidateRect(hwnd, NULL, TRUE);

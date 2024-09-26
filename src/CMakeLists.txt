@@ -37,6 +37,7 @@ set(SWRESAMPLE_NAME swresample-${SWRESAMPLE_VERSION})
 set(is_clang "$<C_COMPILER_ID:Clang>")
 set(v16_or_later "$<VERSION_GREATER_EQUAL:$<C_COMPILER_VERSION>,16>")
 set(v18_or_later "$<VERSION_GREATER_EQUAL:$<C_COMPILER_VERSION>,18>")
+set(v19_or_later "$<VERSION_GREATER_EQUAL:$<C_COMPILER_VERSION>,19>")
 add_library(ffmpeg_input_intf INTERFACE)
 target_include_directories(ffmpeg_input_intf INTERFACE
   "${CMAKE_CURRENT_BINARY_DIR}" # for version.h
@@ -63,6 +64,7 @@ target_compile_options(ffmpeg_input_intf INTERFACE
   -Wno-padded
   $<$<AND:${is_clang},${v16_or_later}>:-Wno-unsafe-buffer-usage>
   $<$<AND:${is_clang},${v18_or_later}>:-Wno-switch-default>
+  $<$<AND:${is_clang},${v19_or_later}>:-Wno-pre-c11-compat>
   -ffunction-sections
   -fdata-sections
   $<$<CONFIG:Debug>:-O0>

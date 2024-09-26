@@ -173,7 +173,7 @@ NODISCARD error ipcclient_call(struct ipcclient *const c,
     }
     int const typ = (int)*(uint32_t *)(void *)buf;
     int const code = (int)*(int64_t *)(void *)(buf + 4);
-    size_t const len = (size_t) * (int64_t *)(void *)(buf + 12);
+    size_t const len = (size_t)*(int64_t *)(void *)(buf + 12);
     struct NATIVE_STR msg = {0};
     if (len) {
       err = sgrow(&msg, len + 1);
