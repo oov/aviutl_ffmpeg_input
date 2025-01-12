@@ -19,8 +19,8 @@ if ("${EXPORT_DIR_NAME}" STREQUAL "")
 endif()
 set(EXPORT_DIR "${CMAKE_CURRENT_BINARY_DIR}/${EXPORT_DIR_NAME}")
 
-set(FFMPEG_URL "https://github.com/oov/ffmpeg-openh264-win/releases/download/rel.2024-08-11/ffmpeg-n7.0.2-3-g96e648ddbc-win32-lgpl-shared-7.0.zip")
-set(OPENH264_URL "http://ciscobinary.openh264.org/openh264-2.4.1-win32.dll.bz2")
+set(FFMPEG_URL "https://github.com/oov/ffmpeg-openh264-win/releases/download/rel.2025-01-12/ffmpeg-n7.1-152-gd72536008a-win32-lgpl-shared-7.1.zip")
+set(OPENH264_URL "http://ciscobinary.openh264.org/openh264-2.5.0-win32.dll.bz2")
 set(OPENH264_LICENSE_URL "http://www.openh264.org/BINARY_LICENSE.txt")
 set(FFMPEG_DIR "${CMAKE_CURRENT_BINARY_DIR}/ffmpeg${FFMPEG_INPUT_BITSIZE}")
 
